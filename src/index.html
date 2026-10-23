@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#ffffff" />
+<meta name="description" content="极简中国象棋：本地双人、三档 AI 对战与好友房间联机。" />
+<title>中国象棋 · 极简对弈</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='27' fill='white' stroke='%23191919' stroke-width='3'/%3E%3Ctext x='32' y='44' font-family='serif' font-size='36' font-weight='700' text-anchor='middle' fill='%23c53a3a'%3E%E5%B8%85%3C/text%3E%3C/svg%3E" />
+<style>
+  :root {
+    color-scheme: light;
+    --ink: #191919;
+    --ink-soft: #393939;
+    --muted: #77736c;
+    --muted-2: #a6a29a;
+    --paper: #ffffff;
+    --wash: #f7f6f3;
+    --wash-2: #efeee9;
+    --line: #dedbd3;
+    --line-strong: #242424;
+    --red: #c43e3e;
+    --green: #267a4d;
+    --focus: #191919;
+    --shadow: 0 18px 50px rgba(28, 24, 18, .06);
+    --radius: 22px;
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: inherit;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input { font: inherit; }
+  button { color: inherit; }
+  button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 3px;
+  }
+  [hidden] { display: none !important; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .app-shell {
+    width: min(100% - 40px, 1040px);
+    margin: 0 auto;
+    padding: 30px 0 26px;
+  }
+
+  /* ---------- Header ---------- */
+  .site-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    margin: 0 2px 22px;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand-mark {
+    width: 52px; height: 52px; flex: 0 0 auto;
+    border: 1.8px solid var(--ink); border-radius: 50%;
+    display: grid; place-items: center; background: #fff;
+    font-family: "SimSun", "Songti SC", "Noto Serif CJK SC", serif;
+    font-size: 27px; font-weight: 700; color: var(--red);
+    line-height: 1;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(25px, 3.2vw, 32px);
+    font-weight: 700;
+    letter-spacing: .13em;
+    line-height: 1.18;
+  }
+  .brand-sub {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: .08em;
+  }
+  .header-meta {
+    color: var(--muted-2);
+    font-size: 11px;
+    letter-spacing: .12em;
+    white-space: nowrap;
+    padding-bottom: 3px;
+  }
+
+  /* ---------- Layout ---------- */
+  .layout {
+    display: grid;
+    grid-template-columns: 216px minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+
+  /* ---------- Mode rail ---------- */
+  .mode-rail {
+    position: sticky;
+    top: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 17px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--wash);
+  }
+  .rail-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin: 1px 2px 5px;
+  }
+  .rail-head span { font-size: 13px; font-weight: 700; letter-spacing: .1em; }
+  .rail-head small { font-size: 9px; letter-spacing: .18em; color: var(--muted-2); }
+  .mode-btn {
+    appearance: none;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 10px;
+    text-align: left;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    background: transparent;
+    cursor: pointer;
+    transition: background .16s ease, border-color .16s ease, transform .16s ease;
+  }
+  .mode-btn:hover { background: rgba(255,255,255,.8); border-color: var(--line); }
+  .mode-btn:active { transform: translateY(1px); }
+  .mode-btn.active { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .mode-glyph {
+    width: 34px; height: 34px; flex: 0 0 auto;
+    display: grid; place-items: center;
+    border: 1px solid #cfcbc2; border-radius: 50%;
+    background: #fff; color: var(--ink);
+    font-family: "SimSun", "Songti SC", serif;
+    font-size: 15px; font-weight: 700;
+  }
+  .mode-glyph.ai { font-family: inherit; font-size: 10px; letter-spacing: -.02em; }
+  .mode-btn.active .mode-glyph { border-color: rgba(255,255,255,.45); color: var(--ink); }
+  .mode-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .mode-copy strong { font-size: 13px; font-weight: 650; letter-spacing: .02em; }
+  .mode-copy small { font-size: 10px; color: var(--muted); letter-spacing: .04em; }
+  .mode-btn.active .mode-copy small { color: #b9b9b9; }
+  .rail-rule { height: 1px; background: var(--line); margin: 8px 2px 6px; }
+  .rail-info {
+    margin-top: 3px;
+    padding: 13px;
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    background: #fff;
+  }
+  .rail-label {
+    margin: 0 0 7px;
+    font-size: 9px;
+    color: var(--muted-2);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  .rail-info-title {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1.55;
+  }
+  .rail-info-text {
+    margin: 5px 0 0;
+    font-size: 10px;
+    line-height: 1.65;
+    color: var(--muted);
+  }
+  .rail-tip {
+    margin: 6px 2px 0;
+    font-size: 10px;
+    line-height: 1.7;
+    color: var(--muted-2);
+  }
+  .rail-tip b { color: var(--muted); font-weight: 600; }
+
+  /* ---------- Game card ---------- */
+  .game-card {
+    padding: 18px clamp(12px, 2.6vw, 22px) 15px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+    box-shadow: var(--shadow);
+  }
+  .game-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 30px;
+    margin: 0 2px 10px;
+  }
+  .mode-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    height: 25px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--wash);
+    color: var(--ink-soft);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .06em;
+    white-space: nowrap;
+  }
+  .turn-summary {
+    display: inline-flex; align-items: center; gap: 7px;
+    flex: 0 0 auto;
+    font-size: 11px; font-weight: 650; color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .turn-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--red);
+    box-shadow: 0 0 0 3px rgba(196, 62, 62, .10);
+  }
+  .turn-dot.green { background: var(--green); box-shadow: 0 0 0 3px rgba(38, 122, 77, .10); }
+  .turn-dot.thinking { animation: breathing 1.2s ease-in-out infinite; }
+  .turn-dot.over { background: var(--muted-2); box-shadow: none; }
+  .status-text {
+    margin-left: auto;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 10.5px;
+    line-height: 1.45;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .status-text.alert { color: var(--red); font-weight: 650; }
+  .status-text.good { color: var(--green); font-weight: 650; }
+
+  .player-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 31px;
+    padding: 3px 2px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .player-row.top { margin-bottom: 5px; }
+  .player-row.bottom { margin-top: 5px; }
+  .player-row.is-turn { color: var(--ink); }
+  .player-avatar {
+    width: 25px; height: 25px; flex: 0 0 auto;
+    display: grid; place-items: center;
+    border: 1.4px solid var(--ink); border-radius: 50%;
+    background: #fff;
+    font-family: "SimSun", "Songti SC", serif;
+    font-size: 14px; font-weight: 700; line-height: 1;
+  }
+  .player-avatar.red { color: var(--red); }
+  .player-avatar.green { color: var(--green); }
+  .player-name { font-weight: 650; letter-spacing: .03em; }
+  .player-tag {
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: var(--wash);
+    color: var(--muted);
+    font-size: 9px;
+    letter-spacing: .03em;
+  }
+  .player-row.is-turn .player-tag { background: #edebe5; color: var(--ink-soft); }
+  .turn-flag {
+    margin-left: auto;
+    display: inline-flex; align-items: center; gap: 5px;
+    color: var(--muted-2);
+    font-size: 9px;
+    letter-spacing: .08em;
+    opacity: 0;
+  }
+  .turn-flag::before {
+    content: ""; width: 4px; height: 4px; border-radius: 50%;
+    background: currentColor;
+  }
+  .player-row.is-turn .turn-flag { opacity: 1; color: var(--ink-soft); }
+
+  /* ---------- Board ---------- */
+  .board-wrap {
+    width: 100%;
+    max-width: 548px;
+    margin: 0 auto;
+    position: relative;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  svg#board {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #fff;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+    cursor: default;
+  }
+  svg#board.can-play { cursor: pointer; }
+  .board-line { fill: none; stroke: var(--line-strong); stroke-width: 1.35; stroke-linecap: square; }
+  .board-frame { fill: #fff; stroke: var(--line-strong); stroke-width: 1.5; }
+  .river-text {
+    fill: #2e2e2e;
+    font-family: "SimSun", "Songti SC", "Noto Serif CJK SC", serif;
+    font-size: 20px;
+    text-anchor: middle;
+    dominant-baseline: central;
+    letter-spacing: 4px;
+  }
+  .last-marker { fill: none; stroke: #9b978e; stroke-width: 1; stroke-dasharray: 3 5; opacity: .72; }
+  .target-dot { fill: var(--ink); opacity: .52; }
+  .capture-ring { fill: none; stroke: var(--ink); stroke-width: 2; opacity: .9; }
+  .check-ring {
+    fill: none; stroke: var(--red); stroke-width: 2;
+    opacity: .85;
+    transform-box: fill-box; transform-origin: center;
+    animation: check-pulse 1.2s ease-in-out infinite;
+  }
+  .piece { cursor: default; }
+  .piece.is-playable { cursor: pointer; }
+  .piece circle.base {
+    fill: #fff;
+    stroke: #191919;
+    stroke-width: 2.05;
+    transition: stroke-width .12s ease;
+  }
+  .piece text {
+    font-family: "SimSun", "Songti SC", "Noto Serif CJK SC", serif;
+    font-size: 25px;
+    font-weight: 700;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .piece.red text { fill: var(--red); }
+  .piece.green text { fill: var(--green); }
+  .piece.selected circle.base { stroke-width: 3.1; }
+  .piece.selected .selection-ring {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.2;
+    opacity: .75;
+  }
+  .piece.red .selection-ring { stroke: var(--red); }
+  .piece.green .selection-ring { stroke: var(--green); }
+  .piece.is-playable:hover circle.base { stroke-width: 2.8; }
+  @keyframes check-pulse {
+    0%, 100% { opacity: .35; r: 26; }
+    50% { opacity: .95; r: 28.5; }
+  }
+  @keyframes breathing { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+
+  /* ---------- Controls & moves ---------- */
+  .controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0 2px;
+  }
+  .btn {
+    appearance: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--ink-soft);
+    padding: 8px 14px;
+    font-size: 11.5px;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease, transform .15s ease, opacity .15s ease;
+  }
+  .btn:hover:not(:disabled) { border-color: #aaa59b; background: var(--wash); }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled { opacity: .34; cursor: not-allowed; }
+  .btn.primary {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: #fff;
+  }
+  .btn.primary:hover:not(:disabled) { background: #3b3b39; border-color: #3b3b39; }
+  .btn.subtle { border-color: transparent; background: transparent; color: var(--muted); }
+  .btn.subtle:hover:not(:disabled) { background: var(--wash); border-color: transparent; }
+  .btn.wide { width: 100%; padding: 12px 16px; font-size: 13px; }
+  .btn .btn-icon { margin-right: 4px; opacity: .8; }
+  .move-panel {
+    margin-top: 12px;
+    padding-top: 11px;
+    border-top: 1px solid #efede7;
+  }
+  .move-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0 2px 7px;
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: .08em;
+  }
+  .move-head span:last-child { color: var(--muted-2); letter-spacing: .03em; }
+  .move-list {
+    min-height: 30px;
+    max-height: 104px;
+    overflow-y: auto;
+    padding: 1px 3px 3px;
+    scrollbar-width: thin;
+    scrollbar-color: #d9d5cc transparent;
+    font-size: 10.5px;
+    line-height: 1.5;
+  }
+  .move-list:empty::after {
+    content: "红方先行。落子记录会显示在这里。";
+    display: block;
+    padding: 5px 0;
+    color: var(--muted-2);
+    font-size: 10px;
+  }
+  .move-line {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr);
+    gap: 5px;
+    padding: 2.5px 0;
+    border-bottom: 1px dashed transparent;
+  }
+  .move-line:nth-child(odd) { background: #fbfaf8; border-radius: 5px; }
+  .move-index { color: var(--muted-2); font-variant-numeric: tabular-nums; }
+  .move-pill { padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .move-pill.red { color: var(--red); }
+  .move-pill.green { color: var(--green); }
+  .move-pill.empty { color: transparent; }
+  .site-footer {
+    margin: 20px 4px 0;
+    text-align: center;
+    color: var(--muted-2);
+    font-size: 9.5px;
+    line-height: 1.7;
+    letter-spacing: .03em;
+  }
+  .site-footer a { color: var(--muted); text-underline-offset: 2px; }
+
+  /* ---------- Modals ---------- */
+  dialog.modal {
+    width: min(92vw, 520px);
+    max-height: min(88vh, 760px);
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    background: #fff;
+    color: var(--ink);
+    box-shadow: 0 30px 90px rgba(20, 18, 15, .20);
+    overflow: auto;
+  }
+  dialog.modal::backdrop {
+    background: rgba(25, 23, 19, .36);
+    backdrop-filter: blur(2px);
+  }
+  dialog.modal[open] { animation: modal-in .18s ease-out; }
+  @keyframes modal-in {
+    from { opacity: 0; transform: translateY(7px) scale(.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .modal-inner {
+    position: relative;
+    padding: 27px clamp(20px, 4vw, 30px) 24px;
+  }
+  .modal-close {
+    position: absolute;
+    top: 13px; right: 13px;
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    border: 0; border-radius: 50%;
+    background: var(--wash);
+    color: var(--muted);
+    font-size: 17px; line-height: 1;
+    cursor: pointer;
+  }
+  .modal-close:hover { background: var(--wash-2); color: var(--ink); }
+  .eyebrow {
+    margin: 0 0 8px;
+    color: var(--muted-2);
+    font-size: 9px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+  .modal h2 {
+    margin: 0;
+    font-size: 23px;
+    font-weight: 700;
+    letter-spacing: .08em;
+  }
+  .modal-desc {
+    margin: 8px 0 0;
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.75;
+  }
+  .field { margin-top: 21px; }
+  .field-label {
+    display: block;
+    margin-bottom: 9px;
+    color: var(--ink-soft);
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: .08em;
+  }
+  .choice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .choice-card {
+    appearance: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    min-height: 74px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    background: #fff;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .14s ease, background .14s ease, box-shadow .14s ease;
+  }
+  .choice-card:hover { border-color: #bfb9ae; background: #fcfbf9; }
+  .choice-card[aria-pressed="true"] {
+    border-color: var(--ink);
+    background: #f3f2ee;
+    box-shadow: inset 0 0 0 1px var(--ink);
+  }
+  .choice-title { font-size: 13px; font-weight: 700; letter-spacing: .04em; }
+  .choice-note { color: var(--muted); font-size: 9.5px; line-height: 1.5; }
+  .choice-mark {
+    margin-top: auto;
+    color: var(--muted-2);
+    font-size: 8.5px;
+    letter-spacing: .07em;
+  }
+  .choice-card[aria-pressed="true"] .choice-mark { color: var(--ink); }
+  .side-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .side-card {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    background: #fff;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .14s ease, background .14s ease, box-shadow .14s ease;
+  }
+  .side-card:hover { border-color: #bfb9ae; }
+  .side-card[aria-pressed="true"] {
+    border-color: var(--ink);
+    background: #f3f2ee;
+    box-shadow: inset 0 0 0 1px var(--ink);
+  }
+  .side-piece {
+    width: 38px; height: 38px; flex: 0 0 auto;
+    display: grid; place-items: center;
+    border: 1.6px solid var(--ink); border-radius: 50%;
+    background: #fff;
+    font-family: "SimSun", "Songti SC", serif;
+    font-size: 20px; font-weight: 700; line-height: 1;
+  }
+  .side-piece.red { color: var(--red); }
+  .side-piece.green { color: var(--green); }
+  .side-copy { display: flex; flex-direction: column; gap: 2px; }
+  .side-copy strong { font-size: 12px; }
+  .side-copy small { color: var(--muted); font-size: 9px; }
+  .ai-summary {
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--wash);
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.7;
+  }
+  .modal-actions { margin-top: 19px; }
+  .micro-note { margin: 10px 0 0; color: var(--muted-2); font-size: 9.5px; line-height: 1.65; text-align: center; }
+  .form-error {
+    margin: 12px 0 0;
+    padding: 9px 11px;
+    border: 1px solid #e8cbcb;
+    border-radius: 9px;
+    background: #fbf3f3;
+    color: #a63636;
+    font-size: 10.5px;
+    line-height: 1.55;
+  }
+  .room-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 3px;
+    border-radius: 11px;
+    background: var(--wash);
+    gap: 3px;
+  }
+  .room-tab {
+    appearance: none;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    padding: 9px 10px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  .room-tab.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .room-pane { padding-top: 17px; }
+  .room-lead {
+    margin: 0 0 14px;
+    color: var(--muted);
+    font-size: 10.5px;
+    line-height: 1.7;
+  }
+  .code-input {
+    width: 100%;
+    height: 50px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    padding: 0 15px;
+    color: var(--ink);
+    font-size: 24px;
+    font-weight: 650;
+    letter-spacing: .32em;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    outline: none;
+  }
+  .code-input::placeholder { color: #c7c2b9; font-size: 14px; font-weight: 400; letter-spacing: .12em; }
+  .code-input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(25,25,25,.06); }
+  .room-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 15px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--wash);
+  }
+  .room-code {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: .2em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+    color: var(--ink);
+  }
+  .room-badge {
+    display: inline-flex; align-items: center;
+    margin-top: 5px;
+    padding: 2px 7px;
+    border: 1px solid #d6d1c7;
+    border-radius: 999px;
+    background: #fff;
+    color: var(--muted);
+    font-size: 8.5px;
+    letter-spacing: .08em;
+  }
+  .room-status {
+    display: flex; align-items: center; gap: 7px;
+    margin: 11px 1px 0;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.55;
+  }
+  .status-led {
+    width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%;
+    background: #c2bdb4;
+  }
+  .room-status.online .status-led { background: var(--green); box-shadow: 0 0 0 3px rgba(38,122,77,.1); }
+  .room-status.waiting .status-led { animation: breathing 1.2s ease-in-out infinite; background: #a99756; }
+  .lobby-side { margin-top: 17px; }
+  .side-opponent {
+    margin: 9px 0 0;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.6;
+  }
+  .side-opponent strong { color: var(--ink-soft); font-weight: 650; }
+  .conflict-note {
+    margin: 9px 0 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #f8f5ec;
+    color: #776b46;
+    font-size: 9.5px;
+    line-height: 1.6;
+  }
+  .waiting-note {
+    margin: 12px 0 0;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.65;
+    text-align: center;
+  }
+  .text-button {
+    display: block;
+    margin: 14px auto 0;
+    padding: 5px;
+    border: 0;
+    background: transparent;
+    color: var(--muted-2);
+    font-size: 10px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .text-button:hover { color: var(--ink); }
+  .join-status {
+    margin: 12px 0 0;
+    color: var(--muted);
+    font-size: 10.5px;
+    line-height: 1.65;
+    text-align: center;
+  }
+
+  /* ---------- RPS ---------- */
+  dialog#rpsDialog { width: min(92vw, 460px); }
+  .rps-inner { padding: 26px clamp(18px, 4vw, 28px) 22px; text-align: center; }
+  .rps-title { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: .12em; }
+  .rps-sub {
+    margin: 8px 0 0;
+    color: var(--muted);
+    font-size: 10.5px;
+    line-height: 1.7;
+  }
+  .rps-scoreboard {
+    display: flex; align-items: center; justify-content: center; gap: 17px;
+    margin: 20px 0 4px;
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .rps-score-item { display: flex; flex-direction: column; gap: 2px; min-width: 48px; }
+  .rps-score-item b { color: var(--ink); font-size: 26px; font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .rps-score-sep { color: var(--muted-2); font-size: 17px; margin-top: 15px; }
+  .rps-round { margin: 7px 0 14px; color: var(--muted-2); font-size: 9px; letter-spacing: .1em; }
+  .rps-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .rps-choice {
+    appearance: none;
+    display: flex; flex-direction: column; align-items: center; gap: 5px;
+    padding: 12px 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    background: #fff;
+    cursor: pointer;
+    transition: border-color .14s ease, background .14s ease, transform .14s ease;
+  }
+  .rps-choice:hover:not(:disabled) { border-color: #aba59a; background: var(--wash); }
+  .rps-choice:active:not(:disabled) { transform: translateY(1px); }
+  .rps-choice:disabled { opacity: .42; cursor: not-allowed; }
+  .rps-choice.picked { border-color: var(--ink); background: #f3f2ee; box-shadow: inset 0 0 0 1px var(--ink); opacity: 1; }
+  .rps-hand-glyph {
+    width: 40px; height: 40px;
+    display: grid; place-items: center;
+    border: 1.4px solid var(--ink); border-radius: 50%;
+    font-family: "SimSun", "Songti SC", serif;
+    font-size: 20px; font-weight: 700;
+  }
+  .rps-choice-label { font-size: 10px; font-weight: 650; letter-spacing: .08em; }
+  .rps-reveal {
+    margin-top: 16px;
+    padding: 13px;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    background: var(--wash);
+  }
+  .rps-hands {
+    display: flex; align-items: center; justify-content: center; gap: 15px;
+    color: var(--muted);
+    font-size: 9px;
+  }
+  .rps-hand { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 52px; }
+  .rps-hand strong {
+    font-family: "SimSun", "Songti SC", serif;
+    font-size: 22px; color: var(--ink); line-height: 1.1;
+  }
+  .rps-vs { color: var(--muted-2); font-size: 10px; margin-top: 14px; }
+  .rps-result { margin: 11px 0 0; color: var(--ink-soft); font-size: 11.5px; font-weight: 650; line-height: 1.6; }
+  .rps-footer { margin: 13px 0 0; color: var(--muted-2); font-size: 9.5px; line-height: 1.6; }
+  .rps-side-note {
+    margin: 12px 0 0; padding: 9px 10px;
+    border-radius: 9px; background: #fbfaf7; border: 1px solid #efede7;
+    color: var(--muted); font-size: 9.5px; line-height: 1.6;
+  }
+
+  /* ---------- Toast ---------- */
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    z-index: 100;
+    transform: translate(-50%, 10px);
+    max-width: min(88vw, 420px);
+    padding: 10px 15px;
+    border: 1px solid #2d2d2d;
+    border-radius: 999px;
+    background: rgba(25,25,25,.94);
+    color: #fff;
+    box-shadow: 0 8px 30px rgba(0,0,0,.18);
+    font-size: 10.5px;
+    line-height: 1.55;
+    text-align: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 880px) {
+    .app-shell { width: min(100% - 28px, 680px); padding-top: 22px; }
+    .site-header { margin-bottom: 16px; }
+    .header-meta { display: none; }
+    .layout { grid-template-columns: 1fr; gap: 12px; }
+    .mode-rail {
+      position: static;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+      padding: 8px;
+      border-radius: 17px;
+    }
+    .rail-head, .rail-rule, .rail-info, .rail-tip { display: none; }
+    .mode-btn { gap: 7px; padding: 8px; border-radius: 11px; }
+    .mode-glyph { width: 27px; height: 27px; font-size: 13px; }
+    .mode-copy strong { font-size: 11px; }
+    .mode-copy small { font-size: 9px; }
+    .game-card { border-radius: 19px; }
+  }
+  @media (max-width: 560px) {
+    .app-shell { width: 100%; padding: 14px 8px 20px; }
+    .site-header { margin: 0 8px 12px; }
+    .brand { gap: 10px; }
+    .brand-mark { width: 42px; height: 42px; font-size: 22px; }
+    h1 { font-size: 23px; }
+    .brand-sub { font-size: 10px; margin-top: 4px; }
+    .mode-rail { border-radius: 15px; padding: 6px; gap: 5px; }
+    .mode-btn { padding: 7px 6px; justify-content: center; }
+    .mode-glyph { display: none; }
+    .mode-copy { align-items: center; }
+    .mode-copy small { display: none; }
+    .game-card { padding: 10px 7px 12px; border-radius: 16px; }
+    .game-head { margin: 1px 3px 6px; gap: 7px; min-height: 25px; }
+    .mode-chip { height: 22px; padding: 0 8px; font-size: 9px; }
+    .turn-summary { font-size: 10px; }
+    .status-text { font-size: 9px; }
+    .player-row { padding-left: 4px; padding-right: 4px; min-height: 27px; }
+    .player-row.top { margin-bottom: 2px; }
+    .player-row.bottom { margin-top: 2px; }
+    .player-avatar { width: 22px; height: 22px; font-size: 12px; }
+    .player-tag { font-size: 8px; padding: 1px 5px; }
+    .controls { gap: 5px; margin-top: 8px; }
+    .btn { padding: 7px 11px; font-size: 10px; }
+    .move-panel { margin-top: 9px; padding-top: 8px; }
+    .move-list { max-height: 82px; font-size: 9.5px; }
+    .site-footer { margin-top: 13px; font-size: 8.5px; }
+    .modal-inner { padding: 23px 16px 18px; }
+    .modal h2 { font-size: 20px; }
+    .choice-grid { gap: 5px; }
+    .choice-card { padding: 10px 8px; min-height: 69px; }
+    .choice-title { font-size: 12px; }
+    .choice-note { font-size: 8.5px; }
+    .side-grid { gap: 6px; }
+    .side-card { padding: 9px 8px; }
+    .side-piece { width: 33px; height: 33px; font-size: 18px; }
+    .room-code { font-size: 22px; }
+    .room-banner { padding: 11px 12px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <header class="site-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">象</div>
+      <div>
+        <h1>中国象棋</h1>
+        <p class="brand-sub">极简棋盘 · 自我对战 · AI 对弈 · 好友联机</p>
+      </div>
+    </div>
+    <div class="header-meta">SIMPLE XIANGQI · 2026</div>
+  </header>
+
+  <main class="layout">
+    <aside class="mode-rail" aria-label="对局模式">
+      <div class="rail-head"><span>对局模式</span><small>MODE</small></div>
+      <button id="modeLocalBtn" class="mode-btn active" type="button" data-mode="local" aria-pressed="true">
+        <span class="mode-glyph" aria-hidden="true">双</span>
+        <span class="mode-copy"><strong>自我对战</strong><small>同屏双人</small></span>
+      </button>
+      <button id="modeAiBtn" class="mode-btn" type="button" data-mode="ai" aria-pressed="false">
+        <span class="mode-glyph ai" aria-hidden="true">AI</span>
+        <span class="mode-copy"><strong>AI 对决</strong><small>三档棋力</small></span>
+      </button>
+      <button id="modeRoomBtn" class="mode-btn" type="button" data-mode="room" aria-pressed="false">
+        <span class="mode-glyph" aria-hidden="true">房</span>
+        <span class="mode-copy"><strong>自定义房间</strong><small>好友联机</small></span>
+      </button>
+      <div class="rail-rule" aria-hidden="true"></div>
+      <div class="rail-info">
+        <p class="rail-label">当前对局</p>
+        <p id="railInfoTitle" class="rail-info-title">自我对战</p>
+        <p id="railInfoText" class="rail-info-text">同一屏幕轮流落子。红方先行，将死或困毙即胜。</p>
+      </div>
+      <p class="rail-tip"><b>提示</b><br />点击己方棋子，再点击目标位置。带圆点的位置可走，带圆框的位置可吃子。</p>
+    </aside>
+
+    <section class="game-card" aria-label="中国象棋对局">
+      <div class="game-head">
+        <span id="modeChip" class="mode-chip">自我对战</span>
+        <div class="turn-summary">
+          <span id="turnDot" class="turn-dot" aria-hidden="true"></span>
+          <span id="turnLabel">红方行棋</span>
+        </div>
+        <span id="statusText" class="status-text" role="status" aria-live="polite">点击棋子，再点击目标位置</span>
+      </div>
+
+      <div id="topPlayerRow" class="player-row top">
+        <span id="topAvatar" class="player-avatar green">将</span>
+        <span id="topName" class="player-name">绿方</span>
+        <span id="topTag" class="player-tag">同屏玩家</span>
+        <span class="turn-flag">行棋中</span>
+      </div>
+
+      <div class="board-wrap">
+        <svg id="board" viewBox="0 0 520 568" role="application" aria-label="中国象棋棋盘。点击棋子和目标位置落子。">
+          <rect class="board-frame" x="32" y="32" width="456" height="504" />
+          <g class="board-line">
+            <path d="M32 32H488 M32 88H488 M32 144H488 M32 200H488 M32 256H488 M32 312H488 M32 368H488 M32 424H488 M32 480H488 M32 536H488" />
+            <path d="M32 32V536 M488 32V536
+                     M89 32V256 M89 312V536
+                     M146 32V256 M146 312V536
+                     M203 32V256 M203 312V536
+                     M260 32V256 M260 312V536
+                     M317 32V256 M317 312V536
+                     M374 32V256 M374 312V536
+                     M431 32V256 M431 312V536" />
+            <path d="M203 32L317 144 M317 32L203 144 M203 424L317 536 M317 424L203 536" />
+          </g>
+          <g class="river-text" aria-hidden="true">
+            <text x="150" y="284">楚河</text>
+            <text x="371" y="284">汉界</text>
+          </g>
+          <g id="lastMoveLayer"></g>
+          <g id="checkLayer"></g>
+          <g id="targetLayer"></g>
+          <g id="pieceLayer"></g>
+        </svg>
+      </div>
+
+      <div id="bottomPlayerRow" class="player-row bottom is-turn">
+        <span id="bottomAvatar" class="player-avatar red">帅</span>
+        <span id="bottomName" class="player-name">红方</span>
+        <span id="bottomTag" class="player-tag">同屏玩家</span>
+        <span class="turn-flag">行棋中</span>
+      </div>
+
+      <div class="controls">
+        <button id="undoBtn" class="btn" type="button" disabled><span class="btn-icon" aria-hidden="true">↶</span>悔棋</button>
+        <button id="restartBtn" class="btn primary" type="button">重新开始</button>
+        <button id="soundBtn" class="btn subtle" type="button" aria-pressed="true"><span class="btn-icon" aria-hidden="true">◉</span><span id="soundLabel">音效开</span></button>
+        <button id="leaveRoomBtn" class="btn subtle" type="button" hidden>退出房间</button>
+      </div>
+
+      <div class="move-panel">
+        <div class="move-head"><span>对局记录</span><span id="moveCount">0 手</span></div>
+        <div id="moveList" class="move-list" aria-live="polite"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    基础规则对弈 · 将死或困毙判负 · 联机为点对点直连，双方需同时在线<br />
+    <span>含 <a href="https://peerjs.com" target="_blank" rel="noopener">PeerJS</a> 联机组件（MIT License）</span>
+  </footer>
+</div>
+
+<!-- ======================== AI / 房间设置 ======================== -->
+<dialog id="setupDialog" class="modal" aria-labelledby="aiTitle">
+  <div class="modal-inner">
+    <button id="setupCloseBtn" class="modal-close" type="button" aria-label="关闭">×</button>
+
+    <section id="aiSetup">
+      <p class="eyebrow">LOCAL AI · 人机对弈</p>
+      <h2 id="aiTitle">AI 对决</h2>
+      <p class="modal-desc">选择难度与你的阵营。AI 会执另一方，红方先行。</p>
+
+      <div class="field">
+        <span class="field-label">AI 难度</span>
+        <div id="levelGroup" class="choice-grid" role="group" aria-label="AI 难度">
+          <button class="choice-card level-option" type="button" data-level="easy" aria-pressed="false">
+            <span class="choice-title">简单</span>
+            <span class="choice-note">轻松热身<br />偶尔失误</span>
+            <span class="choice-mark">01 / EASY</span>
+          </button>
+          <button class="choice-card level-option" type="button" data-level="medium" aria-pressed="true">
+            <span class="choice-title">中等</span>
+            <span class="choice-note">稳健应对<br />适合常玩</span>
+            <span class="choice-mark">02 / MEDIUM</span>
+          </button>
+          <button class="choice-card level-option" type="button" data-level="hard" aria-pressed="false">
+            <span class="choice-title">困难</span>
+            <span class="choice-note">更深计算<br />认真应战</span>
+            <span class="choice-mark">03 / HARD</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">你的阵容</span>
+        <div id="aiSideGroup" class="side-grid" role="group" aria-label="你的阵容">
+          <button class="side-card side-option" type="button" data-side="red" aria-pressed="true">
+            <span class="side-piece red" aria-hidden="true">帅</span>
+            <span class="side-copy"><strong>执帅 · 红方</strong><small>先行</small></span>
+          </button>
+          <button class="side-card side-option" type="button" data-side="green" aria-pressed="false">
+            <span class="side-piece green" aria-hidden="true">将</span>
+            <span class="side-copy"><strong>执将 · 绿方</strong><small>后行</small></span>
+          </button>
+        </div>
+      </div>
+
+      <p id="aiSummary" class="ai-summary">你执红方，AI 执绿方 · 难度：中等</p>
+      <div class="modal-actions">
+        <button id="startAiBtn" class="btn primary wide" type="button">开始对弈</button>
+      </div>
+      <p class="micro-note">棋盘会自动转向你的阵营。AI 计算在独立线程完成，不会卡住界面。</p>
+    </section>
+
+    <section id="roomSetup" hidden>
+      <p class="eyebrow">ONLINE ROOM · 好友联机</p>
+      <h2 id="roomTitle">自定义房间</h2>
+      <p class="modal-desc">创建房间后把 6 位房间号发给好友。双方选好阵容，由房主开始对局。</p>
+
+      <div id="roomChoice">
+        <div class="room-tabs" role="tablist" aria-label="房间操作">
+          <button id="createRoomTab" class="room-tab active" type="button" role="tab" aria-selected="true" aria-controls="createRoomPane">创建房间</button>
+          <button id="joinRoomTab" class="room-tab" type="button" role="tab" aria-selected="false" aria-controls="joinRoomPane">加入房间</button>
+        </div>
+        <div id="createRoomPane" class="room-pane">
+          <p class="room-lead">生成一个公网房间号，等待好友输入加入。对局数据仅在两台设备间点对点传输。</p>
+          <button id="createRoomBtn" class="btn primary wide" type="button">创建新房间</button>
+        </div>
+        <div id="joinRoomPane" class="room-pane" hidden>
+          <p class="room-lead">输入房主分享的 6 位房间号。</p>
+          <label class="sr-only" for="roomCodeInput">房间号</label>
+          <input id="roomCodeInput" class="code-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="输入 6 位房间号" />
+          <div class="modal-actions">
+            <button id="joinRoomBtn" class="btn primary wide" type="button">加入房间</button>
+          </div>
+        </div>
+        <p id="roomError" class="form-error" role="alert" hidden></p>
+      </div>
+
+      <div id="roomLobby" hidden>
+        <div class="room-banner">
+          <div>
+            <span class="field-label">房间号</span>
+            <div id="lobbyCode" class="room-code">------</div>
+            <span id="hostBadge" class="room-badge">房主</span>
+          </div>
+          <button id="copyCodeBtn" class="btn" type="button">复制房间号</button>
+        </div>
+        <p id="lobbyStatus" class="room-status waiting"><span class="status-led" aria-hidden="true"></span><span id="lobbyStatusText">正在创建房间…</span></p>
+
+        <div class="field lobby-side">
+          <span class="field-label">选择你的阵容</span>
+          <div id="roomSideGroup" class="side-grid" role="group" aria-label="选择你的阵容">
+            <button class="side-card room-side" type="button" data-room-side="red" aria-pressed="false">
+              <span class="side-piece red" aria-hidden="true">帅</span>
+              <span class="side-copy"><strong>执帅 · 红方</strong><small>先行</small></span>
+            </button>
+            <button class="side-card room-side" type="button" data-room-side="green" aria-pressed="false">
+              <span class="side-piece green" aria-hidden="true">将</span>
+              <span class="side-copy"><strong>执将 · 绿方</strong><small>后行</small></span>
+            </button>
+          </div>
+          <p id="opponentSideText" class="side-opponent">对方尚未选择阵容。</p>
+          <p id="sideConflictNote" class="conflict-note" hidden>双方选择了同一阵容。房主开始后，将用「剪刀石头布 · 三局两胜」决定选边权。</p>
+        </div>
+
+        <div id="hostStartWrap" class="modal-actions">
+          <button id="startRoomBtn" class="btn primary wide" type="button" disabled>开始对弈</button>
+          <p id="hostStartHint" class="micro-note">等待对方加入并选择阵容。</p>
+        </div>
+        <p id="guestWaitText" class="waiting-note" hidden>等待房主开始对局。若双方选择相同阵容，将先进行剪刀石头布。</p>
+        <button id="exitLobbyBtn" class="text-button" type="button">退出房间</button>
+      </div>
+    </section>
+  </div>
+</dialog>
+
+<!-- ======================== 剪刀石头布 ======================== -->
+<dialog id="rpsDialog" class="modal" aria-labelledby="rpsTitle">
+  <div class="rps-inner">
+    <p class="eyebrow">SIDE SELECTION · 三局两胜</p>
+    <h2 id="rpsTitle" class="rps-title">剪刀 · 石头 · 布</h2>
+    <p id="rpsSub" class="rps-sub">双方选择了同一阵容，赢家执所选阵容，输家自动执另一阵容。</p>
+    <div class="rps-scoreboard" aria-label="比分">
+      <div class="rps-score-item"><b id="rpsMyScore">0</b><span>你</span></div>
+      <div class="rps-score-sep">:</div>
+      <div class="rps-score-item"><b id="rpsOppScore">0</b><span>对方</span></div>
+    </div>
+    <p id="rpsRound" class="rps-round">第 1 回合</p>
+    <div id="rpsChoices" class="rps-choices" role="group" aria-label="出拳">
+      <button class="rps-choice" type="button" data-rps-choice="rock"><span class="rps-hand-glyph" aria-hidden="true">石</span><span class="rps-choice-label">石头</span></button>
+      <button class="rps-choice" type="button" data-rps-choice="scissors"><span class="rps-hand-glyph" aria-hidden="true">剪</span><span class="rps-choice-label">剪刀</span></button>
+      <button class="rps-choice" type="button" data-rps-choice="paper"><span class="rps-hand-glyph" aria-hidden="true">布</span><span class="rps-choice-label">布</span></button>
+    </div>
+    <div id="rpsReveal" class="rps-reveal" hidden>
+      <div class="rps-hands">
+        <div class="rps-hand"><span>你</span><strong id="rpsMyHand">—</strong></div>
+        <div class="rps-vs">VS</div>
+        <div class="rps-hand"><span>对方</span><strong id="rpsOppHand">—</strong></div>
+      </div>
+      <p id="rpsResult" class="rps-result"></p>
+    </div>
+    <p id="rpsFooter" class="rps-footer">请选择你的手势</p>
+  </div>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<!-- PeerJS 1.5.5 · Copyright (c) 2015 Michelle Bu and Eric Zhang · MIT License -->
+<script>/*__PEERJS__*/</script>
+<script>/*__APP__*/</script>
+</body>
+</html>
