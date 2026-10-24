@@ -544,6 +544,64 @@
     medium: { label: '中等', minDelay: 420 },
     hard: { label: '困难', minDelay: 520 }
   };
+  const PROTOCOL_VERSION = 2;
+  const APP_VERSION = '2.0';
+  const SOUND_PRESETS = {
+    wood: {
+      label: '木击',
+      symbol: '木',
+      description: '木棍与木棍敲击声'
+    },
+    stone: {
+      label: '石击',
+      symbol: '石',
+      description: '鹅卵石与鹅卵石敲击声'
+    },
+    water: {
+      label: '水滴',
+      symbol: '滴',
+      description: '溶洞里的水滴声'
+    },
+    keyboard: {
+      label: '机械轴',
+      symbol: '轴',
+      description: '机械键盘轴体敲击声'
+    },
+    bomb: {
+      label: '爆炸',
+      symbol: '爆',
+      description: '炸弹爆炸声'
+    }
+  };
+  const SOUND_ORDER = ['wood', 'stone', 'water', 'keyboard', 'bomb'];
+  const PEER_OPTIONS = {
+    debug: 0,
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' },
+        {
+          urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'],
+          username: 'peerjs',
+          credential: 'peerjsp'
+        }
+      ],
+      sdpSemantics: 'unified-plan'
+    }
+  };
+
+  function createPeerOptions() {
+    return {
+      debug: PEER_OPTIONS.debug,
+      config: {
+        ...PEER_OPTIONS.config,
+        iceServers: PEER_OPTIONS.config.iceServers.map(server => ({
+          ...server,
+          urls: Array.isArray(server.urls) ? server.urls.slice() : server.urls
+        }))
+      }
+    };
+  }
   const RPS_HANDS = {
     rock: { label: '石头', glyph: '石' },
     scissors: { label: '剪刀', glyph: '剪' },
@@ -576,6 +634,8 @@
     railInfoTitle: $('railInfoTitle'),
     railInfoText: $('railInfoText'),
     undoBtn: $('undoBtn'),
+    drawBtn: $('drawBtn'),
+    resignBtn: $('resignBtn'),
     restartBtn: $('restartBtn'),
     soundBtn: $('soundBtn'),
     soundLabel: $('soundLabel'),
@@ -583,6 +643,31 @@
     moveList: $('moveList'),
     moveCount: $('moveCount'),
     toast: $('toast'),
+
+    resignDialog: $('resignDialog'),
+    resignMessage: $('resignMessage'),
+    resignCancelBtn: $('resignCancelBtn'),
+    resignConfirmBtn: $('resignConfirmBtn'),
+
+    drawDialog: $('drawDialog'),
+    drawTitle: $('drawTitle'),
+    drawMessage: $('drawMessage'),
+    drawSub: $('drawSub'),
+    drawWaiting: $('drawWaiting'),
+    drawWaitingText: $('drawWaitingText'),
+    drawActions: $('drawActions'),
+    drawAcceptBtn: $('drawAcceptBtn'),
+    drawDeclineBtn: $('drawDeclineBtn'),
+    drawOkBtn: $('drawOkBtn'),
+    drawNote: $('drawNote'),
+
+    soundDialog: $('soundDialog'),
+    soundCloseBtn: $('soundCloseBtn'),
+    soundOptions: $('soundOptions'),
+    soundVolume: $('soundVolume'),
+    soundVolumeValue: $('soundVolumeValue'),
+    soundMuteBtn: $('soundMuteBtn'),
+    versionLabel: $('versionLabel'),
 
     setupDialog: $('setupDialog'),
     setupCloseBtn: $('setupCloseBtn'),
@@ -632,13 +717,25 @@
     rpsFooter: $('rpsFooter')
   };
 
-  const initialSound = (() => {
+  const soundPrefs = (() => {
+    const defaults = { enabled: true, preset: 'wood', volume: 0.9 };
     try {
-      const saved = localStorage.getItem('xq-sound-v1');
-      return saved === null ? true : saved === '1';
+      const raw = localStorage.getItem('xq-sound-v2');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.enabled === 'boolean') defaults.enabled = parsed.enabled;
+        if (SOUND_PRESETS[parsed.preset]) defaults.preset = parsed.preset;
+        if (Number.isFinite(parsed.volume)) {
+          defaults.volume = Math.min(1, Math.max(0, Number(parsed.volume)));
+        }
+      } else {
+        const legacy = localStorage.getItem('xq-sound-v1');
+        if (legacy === '0') defaults.enabled = false;
+      }
     } catch {
-      return true;
+      /* localStorage 在隐私模式下可能不可用 */
     }
+    return defaults;
   })();
 
   const state = {
@@ -652,14 +749,24 @@
     gameOver: false,
     winner: null,
     endReason: '',
+    endType: null,
     inCheck: false,
     orientation: 'red',
-    soundOn: initialSound,
+    soundOn: soundPrefs.enabled,
+    soundPreset: soundPrefs.preset,
+    soundVolume: soundPrefs.volume,
     ai: freshAIState(),
     net: freshNetState()
   };
 
   const setupDraft = { level: 'medium', side: 'red' };
+  const drawFlow = {
+    active: false,
+    mode: null,
+    role: null,
+    offeror: null,
+    timer: null
+  };
   const rps = {
     active: false,
     role: null,
@@ -677,7 +784,10 @@
   let toastTimer = null;
   let soundCount = 0;
   let audioContext = null;
+  let audioMaster = null;
+  let audioCompressor = null;
   let aiWorkerUrl = null;
+  let pendingResignSide = null;
   const aiReady = (() => {
     try {
       const source = [
@@ -731,6 +841,13 @@
       pendingTimer: null,
       joinTimer: null,
       handshakeTimer: null,
+      startRetryTimer: null,
+      startRetries: 0,
+      startAcked: true,
+      startWarning: false,
+      rpsRetryTimer: null,
+      rpsRetries: 0,
+      rpsAckReceived: true,
       generation: 0,
       closing: false
     };
@@ -759,15 +876,43 @@
     try { localStorage.setItem(key, value); } catch { /* 忽略隐私模式限制 */ }
   }
 
+  function syncFallbackModalClass() {
+    document.body.classList.toggle('fallback-modal', Boolean(document.querySelector('dialog.modal.fallback-open')));
+  }
+
   function showDialog(dialog) {
-    if (!dialog) return;
-    if (!dialog.open) {
-      try { dialog.showModal(); } catch { dialog.setAttribute('open', ''); }
+    if (!dialog || dialog.open) return;
+    if (typeof dialog.showModal === 'function') {
+      try {
+        dialog.showModal();
+        return;
+      } catch {
+        /* 某些内嵌浏览器会禁用原生模态框，走下面的兜底显示 */
+      }
     }
+    dialog.setAttribute('open', '');
+    dialog.classList.add('fallback-open');
+    syncFallbackModalClass();
   }
 
   function closeDialog(dialog) {
-    if (dialog && dialog.open) dialog.close();
+    if (!dialog) return;
+    if (document.activeElement && dialog.contains(document.activeElement) && typeof document.activeElement.blur === 'function') {
+      try { document.activeElement.blur(); } catch { /* ignore */ }
+    }
+    try {
+      if (dialog.open && typeof dialog.close === 'function') dialog.close();
+    } catch {
+      /* 继续强制移除 open，避免弹窗残留挡住棋盘 */
+    }
+    dialog.removeAttribute('open');
+    dialog.classList.remove('fallback-open');
+    syncFallbackModalClass();
+  }
+
+  function closeAllDialogs() {
+    for (const dialog of document.querySelectorAll('dialog.modal')) closeDialog(dialog);
+    document.body.classList.remove('fallback-modal');
   }
 
   function isOnlineActive() {
@@ -802,10 +947,6 @@
     return state.orientation === 'green' ? { r: 9 - r, c: 8 - c } : { r, c };
   }
 
-  function logicalPos(r, c) {
-    return state.orientation === 'green' ? { r: 9 - r, c: 8 - c } : { r, c };
-  }
-
   function svgEl(tag, attrs = {}) {
     const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
     for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
@@ -823,6 +964,7 @@
       gameOver: state.gameOver,
       winner: state.winner,
       endReason: state.endReason,
+      endType: state.endType,
       inCheck: state.inCheck,
       orientation: state.orientation
     };
@@ -838,85 +980,277 @@
     state.gameOver = snapshot.gameOver;
     state.winner = snapshot.winner;
     state.endReason = snapshot.endReason;
+    state.endType = snapshot.endType || null;
     state.inCheck = snapshot.inCheck;
     state.orientation = snapshot.orientation;
     state.selected = null;
   }
 
   /* ======================================================================
-     4. 音效
+     4. 音效：五种实时合成方案，统一压缩限幅并支持音量控制
      ====================================================================== */
+  function saveSoundPrefs() {
+    safeStorageSet('xq-sound-v2', JSON.stringify({
+      enabled: state.soundOn,
+      preset: state.soundPreset,
+      volume: state.soundVolume
+    }));
+  }
+
+  function updateAudioMasterGain() {
+    if (!audioContext || !audioMaster) return;
+    const target = state.soundOn ? Math.pow(Math.max(0, Math.min(1, state.soundVolume)), 0.6) : 0;
+    try {
+      audioMaster.gain.setTargetAtTime(target, audioContext.currentTime, 0.012);
+    } catch {
+      audioMaster.gain.value = target;
+    }
+  }
+
   function ensureAudioContext() {
-    if (!state.soundOn) return null;
     try {
       if (!audioContext) {
         const AudioCtor = window.AudioContext || window.webkitAudioContext;
         if (!AudioCtor) return null;
         audioContext = new AudioCtor();
+        audioCompressor = audioContext.createDynamicsCompressor();
+        audioCompressor.threshold.value = -8;
+        audioCompressor.knee.value = 18;
+        audioCompressor.ratio.value = 10;
+        audioCompressor.attack.value = 0.002;
+        audioCompressor.release.value = 0.22;
+        audioMaster = audioContext.createGain();
+        audioMaster.gain.value = state.soundOn
+          ? Math.pow(Math.max(0, Math.min(1, state.soundVolume)), 0.6)
+          : 0;
+        audioMaster.connect(audioCompressor);
+        audioCompressor.connect(audioContext.destination);
       }
       if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+      updateAudioMasterGain();
       return audioContext;
     } catch {
       return null;
     }
   }
 
-  function playMoveSound(captured = false) {
-    if (!state.soundOn) return;
+  function createNoiseBuffer(ctx, seconds) {
+    const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    return buffer;
+  }
+
+  function noiseBurst(ctx, destination, options) {
+    const {
+      at,
+      duration = 0.05,
+      peak = 0.4,
+      attack = 0.001,
+      decay = Math.min(duration, 0.05),
+      filter = 'bandpass',
+      frequency = 1000,
+      frequencyEnd = null,
+      q = 0.9
+    } = options;
+    const source = ctx.createBufferSource();
+    source.buffer = createNoiseBuffer(ctx, duration);
+    const filterNode = ctx.createBiquadFilter();
+    filterNode.type = filter;
+    filterNode.frequency.setValueAtTime(Math.max(20, frequency), at);
+    if (frequencyEnd) {
+      filterNode.frequency.exponentialRampToValueAtTime(Math.max(20, frequencyEnd), at + duration);
+    }
+    filterNode.Q.value = q;
+    const gain = ctx.createGain();
+    const safePeak = Math.max(0.0002, peak);
+    gain.gain.setValueAtTime(0.0001, at);
+    gain.gain.exponentialRampToValueAtTime(safePeak, at + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + Math.max(attack + 0.005, decay));
+    source.connect(filterNode).connect(gain).connect(destination);
+    source.start(at);
+    source.stop(at + duration + 0.02);
+  }
+
+  function toneBurst(ctx, destination, options) {
+    const {
+      at,
+      type = 'sine',
+      frequency,
+      frequencyEnd = null,
+      duration = 0.1,
+      peak = 0.4,
+      attack = 0.002
+    } = options;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(Math.max(20, frequency), at);
+    if (frequencyEnd) {
+      osc.frequency.exponentialRampToValueAtTime(Math.max(20, frequencyEnd), at + duration);
+    }
+    const safePeak = Math.max(0.0002, peak);
+    gain.gain.setValueAtTime(0.0001, at);
+    gain.gain.exponentialRampToValueAtTime(safePeak, at + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+    osc.connect(gain).connect(destination);
+    osc.start(at);
+    osc.stop(at + duration + 0.02);
+  }
+
+  function playPresetSound(preset, captured = false) {
+    if (!state.soundOn) return false;
     const ctx = ensureAudioContext();
-    if (!ctx) return;
+    if (!ctx || !audioMaster) return false;
     soundCount++;
-    const t = ctx.currentTime;
+    const at = ctx.currentTime + 0.006;
     try {
-      const master = ctx.createGain();
-      master.gain.value = 0.28;
-      master.connect(ctx.destination);
-
-      const thump = ctx.createOscillator();
-      const thumpGain = ctx.createGain();
-      thump.type = 'triangle';
-      thump.frequency.setValueAtTime(captured ? 235 : 275, t);
-      thump.frequency.exponentialRampToValueAtTime(captured ? 82 : 105, t + 0.075);
-      thumpGain.gain.setValueAtTime(0.0001, t);
-      thumpGain.gain.exponentialRampToValueAtTime(0.6, t + 0.006);
-      thumpGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
-      thump.connect(thumpGain).connect(master);
-      thump.start(t);
-      thump.stop(t + 0.16);
-
-      const length = Math.max(1, Math.floor(ctx.sampleRate * 0.032));
-      const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < length; i++) {
-        const fade = Math.pow(1 - i / length, 3);
-        data[i] = (Math.random() * 2 - 1) * fade;
+      if (preset === 'wood') {
+        noiseBurst(ctx, audioMaster, {
+          at, duration: 0.085, peak: captured ? 0.9 : 0.72, decay: 0.06,
+          filter: 'bandpass', frequency: 760 + Math.random() * 180, q: 1.15
+        });
+        noiseBurst(ctx, audioMaster, {
+          at, duration: 0.045, peak: 0.26, decay: 0.032,
+          filter: 'bandpass', frequency: 1900 + Math.random() * 300, q: 2.2
+        });
+        toneBurst(ctx, audioMaster, {
+          at, type: 'triangle', frequency: captured ? 180 : 220,
+          frequencyEnd: captured ? 76 : 96, duration: captured ? 0.14 : 0.105,
+          peak: captured ? 0.86 : 0.66
+        });
+        if (captured) {
+          noiseBurst(ctx, audioMaster, {
+            at: at + 0.028, duration: 0.05, peak: 0.3, decay: 0.035,
+            filter: 'bandpass', frequency: 650, q: 1
+          });
+        }
+      } else if (preset === 'stone') {
+        for (let i = 0; i < (captured ? 3 : 2); i++) {
+          noiseBurst(ctx, audioMaster, {
+            at: at + i * 0.021,
+            duration: 0.042,
+            peak: 0.74 - i * 0.12,
+            decay: 0.03,
+            filter: 'bandpass',
+            frequency: 2250 + Math.random() * 950,
+            q: 1.1
+          });
+        }
+        toneBurst(ctx, audioMaster, {
+          at, type: 'triangle', frequency: 650, frequencyEnd: 330,
+          duration: 0.055, peak: 0.34
+        });
+      } else if (preset === 'water') {
+        noiseBurst(ctx, audioMaster, {
+          at, duration: 0.022, peak: 0.18, decay: 0.012,
+          filter: 'highpass', frequency: 2100, q: 0.7
+        });
+        toneBurst(ctx, audioMaster, {
+          at: at + 0.008, type: 'sine', frequency: 1180, frequencyEnd: 430,
+          duration: 0.28, peak: 0.72, attack: 0.004
+        });
+        toneBurst(ctx, audioMaster, {
+          at: at + 0.008, type: 'sine', frequency: 2360, frequencyEnd: 960,
+          duration: 0.09, peak: 0.08, attack: 0.003
+        });
+        toneBurst(ctx, audioMaster, {
+          at: at + 0.16, type: 'sine', frequency: 860, frequencyEnd: 330,
+          duration: captured ? 0.32 : 0.24, peak: captured ? 0.3 : 0.18, attack: 0.005
+        });
+      } else if (preset === 'keyboard') {
+        noiseBurst(ctx, audioMaster, {
+          at, duration: 0.018, peak: 0.58, decay: 0.012,
+          filter: 'bandpass', frequency: 3200 + Math.random() * 550, q: 1.3
+        });
+        noiseBurst(ctx, audioMaster, {
+          at: at + 0.022, duration: 0.038, peak: 0.48, decay: 0.026,
+          filter: 'bandpass', frequency: 980 + Math.random() * 200, q: 0.95
+        });
+        toneBurst(ctx, audioMaster, {
+          at: at + 0.03, type: 'triangle', frequency: 320, frequencyEnd: 150,
+          duration: 0.055, peak: 0.32
+        });
+        toneBurst(ctx, audioMaster, {
+          at: at + 0.045, type: 'sine', frequency: 1840, frequencyEnd: 1320,
+          duration: 0.038, peak: 0.07
+        });
+      } else if (preset === 'bomb') {
+        noiseBurst(ctx, audioMaster, {
+          at, duration: 0.72, peak: 0.98, attack: 0.004, decay: 0.62,
+          filter: 'lowpass', frequency: 1800, frequencyEnd: 80, q: 0.7
+        });
+        noiseBurst(ctx, audioMaster, {
+          at, duration: 0.055, peak: 0.42, decay: 0.035,
+          filter: 'highpass', frequency: 2400, q: 0.6
+        });
+        toneBurst(ctx, audioMaster, {
+          at, type: 'sine', frequency: captured ? 88 : 78, frequencyEnd: 28,
+          duration: captured ? 0.8 : 0.65, peak: 0.95, attack: 0.003
+        });
+      } else {
+        return false;
       }
-      const noise = ctx.createBufferSource();
-      noise.buffer = buffer;
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.value = captured ? 440 : 620;
-      filter.Q.value = 0.75;
-      const clickGain = ctx.createGain();
-      clickGain.gain.value = captured ? 0.22 : 0.14;
-      noise.connect(filter).connect(clickGain).connect(master);
-      noise.start(t);
-      noise.stop(t + 0.04);
+      return true;
     } catch {
-      /* 音频失败不应影响对局 */
+      return false;
     }
   }
 
-  function updateSoundButton() {
-    dom.soundBtn.setAttribute('aria-pressed', String(state.soundOn));
-    dom.soundLabel.textContent = state.soundOn ? '音效开' : '音效关';
+  function playMoveSound(captured = false) {
+    playPresetSound(state.soundPreset, captured);
   }
 
-  function toggleSound() {
-    state.soundOn = !state.soundOn;
-    safeStorageSet('xq-sound-v1', state.soundOn ? '1' : '0');
+  function updateSoundButton() {
+    const preset = SOUND_PRESETS[state.soundPreset] || SOUND_PRESETS.wood;
+    const percent = Math.round(state.soundVolume * 100);
+    dom.soundLabel.textContent = state.soundOn ? '音效' : '音效关';
+    dom.soundBtn.title = state.soundOn
+      ? `落子音效：${preset.label} · 音量 ${percent}%`
+      : '音效已关闭，点击设置';
+    dom.soundBtn.setAttribute('aria-label', state.soundOn
+      ? `打开音效设置，当前${preset.label}，音量${percent}%`
+      : '打开音效设置，当前静音');
+    for (const btn of dom.soundOptions.querySelectorAll('[data-sound]')) {
+      btn.setAttribute('aria-pressed', String(btn.dataset.sound === state.soundPreset));
+    }
+    dom.soundVolume.value = String(percent);
+    dom.soundVolumeValue.textContent = `${percent}%`;
+    dom.soundMuteBtn.textContent = state.soundOn ? '关闭音效' : '开启音效';
+    dom.soundMuteBtn.setAttribute('aria-pressed', String(!state.soundOn));
+  }
+
+  function openSoundDialog() {
     updateSoundButton();
-    if (state.soundOn) playMoveSound(false);
+    closeDialog(dom.resignDialog);
+    showDialog(dom.soundDialog);
+  }
+
+  function selectSoundPreset(preset) {
+    if (!SOUND_PRESETS[preset]) return;
+    state.soundPreset = preset;
+    state.soundOn = true;
+    saveSoundPrefs();
+    updateSoundButton();
+    playPresetSound(preset, false);
+  }
+
+  function setSoundVolume(percent) {
+    const value = Math.max(0, Math.min(100, Number(percent))) / 100;
+    state.soundVolume = value;
+    saveSoundPrefs();
+    updateSoundButton();
+    updateAudioMasterGain();
+  }
+
+  function toggleSoundMute() {
+    state.soundOn = !state.soundOn;
+    saveSoundPrefs();
+    updateSoundButton();
+    if (state.soundOn) playPresetSound(state.soundPreset, false);
     showToast(state.soundOn ? '落子音效已开启' : '落子音效已关闭');
   }
 
@@ -924,7 +1258,7 @@
      5. 棋盘与信息渲染
      ====================================================================== */
   function canPlayNow() {
-    if (state.gameOver) return false;
+    if (state.gameOver || drawFlow.active) return false;
     if (state.mode === 'ai') {
       return !state.ai.thinking && state.turn === state.ai.humanSide;
     }
@@ -1097,12 +1431,32 @@
 
     if (state.gameOver) {
       dom.turnDot.classList.add('over');
-      dom.turnLabel.textContent = `${SIDE_NAME[state.winner]}胜`;
-      const resultText = state.endReason === '困毙' ? '无棋可走，困毙判负' : '将死，对局结束';
+      const isDraw = state.endType === 'draw' || !state.winner;
+      dom.turnLabel.textContent = isDraw ? '平局' : `${SIDE_NAME[state.winner]}胜`;
+      let resultText;
+      if (isDraw) {
+        resultText = '双方同意和棋，本局平局';
+      } else if (state.endType === 'resign') {
+        resultText = `${SIDE_NAME[otherSide(state.winner)]}认输，${SIDE_NAME[state.winner]}获胜`;
+      } else if (state.endType === 'stalemate' || state.endReason === '困毙') {
+        resultText = '无棋可走，困毙判负';
+      } else {
+        resultText = '将死，对局结束';
+      }
       if (state.mode === 'online' && state.net.role === 'guest') {
         setStatus(`${resultText} · 等待房主重新开始`, 'good');
       } else {
         setStatus(`${resultText} · 点击重新开始再来一局`, 'good');
+      }
+    } else if (drawFlow.active) {
+      dom.turnDot.classList.add('thinking');
+      dom.turnLabel.textContent = '和棋请求';
+      if (drawFlow.mode === 'ai') {
+        setStatus('等待 AI 对和棋请求作出回应…');
+      } else if (drawFlow.role === 'offeror') {
+        setStatus('已发起和棋请求，等待对方回应…');
+      } else {
+        setStatus('对方选择和棋，等待回应');
       }
     } else if (isAiThinking) {
       dom.turnDot.classList.add(state.turn === 'green' ? 'green' : 'red');
@@ -1119,6 +1473,14 @@
         : state.net.connected
           ? '房间已连接，打开「自定义房间」选择阵容'
           : '正在等待房间连接…');
+    } else if (state.mode === 'online' && state.net.startWarning) {
+      dom.turnDot.classList.add('thinking');
+      dom.turnLabel.textContent = '等待对方';
+      setStatus('对方未确认开局，请检查网络或重新开始房间', 'alert');
+    } else if (state.mode === 'online' && state.net.role === 'host' && !state.net.startAcked) {
+      dom.turnDot.classList.add('thinking');
+      dom.turnLabel.textContent = '等待对方';
+      setStatus('已发送开局，等待手机端确认收到…');
     } else if (state.mode === 'online' && state.net.pendingMove) {
       dom.turnDot.classList.add(state.turn === 'green' ? 'green' : 'red');
       dom.turnLabel.textContent = `${currentSideName()}行棋`;
@@ -1142,11 +1504,22 @@
     const undoDisabled = state.mode === 'online' || !canUndo();
     dom.undoBtn.disabled = undoDisabled;
     dom.undoBtn.title = state.mode === 'online' ? '联机对局暂不支持悔棋' : '';
+    dom.drawBtn.disabled = !canOfferDrawNow();
+    dom.drawBtn.title = !canOfferDrawNow()
+      ? (drawFlow.active ? '已有和棋请求待处理' : '当前不可提议和棋')
+      : '向对方发起和棋请求';
+    dom.resignBtn.disabled = !canResignNow();
+    dom.resignBtn.title = state.mode === 'local'
+      ? '当前行棋方认输'
+      : '确认认输';
     const onlineControl = state.mode === 'online';
-    dom.restartBtn.disabled = onlineControl && (!state.net.connected || state.net.role !== 'host' || state.net.phase !== 'playing');
-    dom.restartBtn.title = onlineControl && state.net.role !== 'host' ? '联机对局由房主重新开始' : '';
+    dom.restartBtn.disabled = onlineControl
+      ? (!state.net.connected || state.net.role !== 'host' || state.net.phase !== 'playing' || drawFlow.active)
+      : false;
+    dom.restartBtn.title = onlineControl && state.net.role !== 'host'
+      ? '联机对局由房主重新开始'
+      : drawFlow.active ? '请先处理和棋请求' : '';
     dom.leaveRoomBtn.hidden = !onlineControl;
-    dom.soundBtn.setAttribute('aria-pressed', String(state.soundOn));
   }
 
   function renderMoves() {
@@ -1194,6 +1567,10 @@
      6. 落子、悔棋与重开
      ====================================================================== */
   function resetBoardState(orientation = 'red') {
+    clearDrawFlow();
+    closeDialog(dom.resignDialog);
+    closeDialog(dom.soundDialog);
+    pendingResignSide = null;
     state.board = Engine.initialBoard();
     state.turn = 'red';
     state.selected = null;
@@ -1203,6 +1580,7 @@
     state.gameOver = false;
     state.winner = null;
     state.endReason = '';
+    state.endType = null;
     state.inCheck = false;
     state.orientation = orientation;
   }
@@ -1235,10 +1613,364 @@
       state.gameOver = true;
       state.winner = piece.side;
       state.endReason = state.inCheck ? '将死' : '困毙';
+      state.endType = state.inCheck ? 'checkmate' : 'stalemate';
+      closeDialog(dom.soundDialog);
+      closeDialog(dom.resignDialog);
     }
     if (sound) playMoveSound(Boolean(captured));
     render();
     return { piece, captured, gameOver: state.gameOver };
+  }
+
+  /* ---------- 终局、认输与和棋 ---------- */
+  function finishGame({ winner = null, endType = 'checkmate', reason = '' } = {}) {
+    if (state.gameOver) return false;
+    state.gameOver = true;
+    state.winner = winner;
+    state.endType = endType;
+    state.endReason = reason || (endType === 'draw' ? '和棋' : '对局结束');
+    state.selected = null;
+    cancelAiWork();
+    clearStartRetryTimer();
+    clearRpsRetryTimer();
+    closeDialog(dom.soundDialog);
+    closeDialog(dom.resignDialog);
+    if (state.mode === 'online') clearPendingMove();
+    render();
+    return true;
+  }
+
+  function canResignNow() {
+    if (state.gameOver || drawFlow.active) return false;
+    if (state.mode === 'online') {
+      return state.net.phase === 'playing' && state.net.connected;
+    }
+    return true;
+  }
+
+  function canOfferDrawNow() {
+    if (!canResignNow()) return false;
+    if (state.mode === 'ai') {
+      return !state.ai.thinking && state.turn === state.ai.humanSide;
+    }
+    if (state.mode === 'online' && state.net.pendingMove) return false;
+    return true;
+  }
+
+  function localResigningSide() {
+    if (state.mode === 'ai') return state.ai.humanSide;
+    if (state.mode === 'online') return state.net.mySide;
+    return state.turn;
+  }
+
+  function openResignDialog() {
+    if (!canResignNow()) return;
+    const side = localResigningSide();
+    if (!isSide(side)) return;
+    pendingResignSide = side;
+    if (state.mode === 'ai') {
+      dom.resignMessage.textContent = `你执${SIDE_COLOR_NAME[side]}，确认认输后 AI 获胜。`;
+    } else if (state.mode === 'online') {
+      dom.resignMessage.textContent = `你执${SIDE_COLOR_NAME[side]}，确认认输后对手获胜。`;
+    } else {
+      dom.resignMessage.textContent = `当前行棋方为${SIDE_COLOR_NAME[side]}，确认认输后 ${SIDE_NAME[otherSide(side)]} 获胜。`;
+    }
+    showDialog(dom.resignDialog);
+  }
+
+  function confirmResign() {
+    const side = pendingResignSide;
+    if (!isSide(side) || state.gameOver) {
+      closeDialog(dom.resignDialog);
+      pendingResignSide = null;
+      return;
+    }
+    closeDialog(dom.resignDialog);
+    pendingResignSide = null;
+    if (state.mode === 'online') {
+      if (!state.net.connected) {
+        showToast('连接已断开，无法发送认输');
+        render();
+        return;
+      }
+      netSend({ type: 'resign', gameId: state.net.gameId });
+      clearDrawFlow();
+      finishGame({ winner: otherSide(side), endType: 'resign', reason: '认输' });
+      showToast('你已认输');
+      return;
+    }
+    clearDrawFlow();
+    finishGame({ winner: otherSide(side), endType: 'resign', reason: '认输' });
+    showToast(`${SIDE_NAME[side]}认输，${SIDE_NAME[otherSide(side)]}获胜`);
+  }
+
+  function setDrawDialogContent({ title, message, sub, waiting = false, actions = false, result = false, waitingText = '等待对方回应…', okText = '继续对弈', note = '' }) {
+    dom.drawTitle.textContent = title;
+    dom.drawMessage.textContent = message;
+    dom.drawSub.textContent = sub;
+    dom.drawWaiting.hidden = !waiting;
+    dom.drawWaitingText.textContent = waitingText;
+    dom.drawActions.hidden = !actions;
+    dom.drawOkBtn.hidden = !result;
+    dom.drawOkBtn.textContent = okText;
+    dom.drawNote.hidden = !note;
+    dom.drawNote.textContent = note;
+    showDialog(dom.drawDialog);
+  }
+
+  function openIncomingDrawDialog(offeror, mode) {
+    drawFlow.active = true;
+    drawFlow.mode = mode;
+    drawFlow.role = 'responder';
+    drawFlow.offeror = offeror;
+    if (drawFlow.timer) {
+      clearTimeout(drawFlow.timer);
+      drawFlow.timer = null;
+    }
+    closeAllDialogs();
+    setDrawDialogContent({
+      title: '和棋请求',
+      message: '对方选择和棋，是否接受？',
+      sub: `${SIDE_NAME[offeror]}发起 · 接受后本局立即以平局结束`,
+      actions: true,
+      okText: '继续对弈'
+    });
+    render();
+  }
+
+  function clearDrawFlow() {
+    if (drawFlow.timer) {
+      clearTimeout(drawFlow.timer);
+      drawFlow.timer = null;
+    }
+    drawFlow.active = false;
+    drawFlow.mode = null;
+    drawFlow.role = null;
+    drawFlow.offeror = null;
+    closeDialog(dom.drawDialog);
+  }
+
+  function showDrawResult(title, message, sub, accepted) {
+    setDrawDialogContent({
+      title,
+      message,
+      sub,
+      result: true,
+      okText: accepted ? '查看棋局' : '继续对弈',
+      note: accepted ? '本局结果：平局。' : '和棋请求未生效，对局继续。'
+    });
+  }
+
+  function startAiDrawOffer() {
+    const humanSide = state.ai.humanSide;
+    drawFlow.active = true;
+    drawFlow.mode = 'ai';
+    drawFlow.role = 'offeror';
+    drawFlow.offeror = humanSide;
+    if (drawFlow.timer) clearTimeout(drawFlow.timer);
+    setDrawDialogContent({
+      title: '和棋请求',
+      message: '已向 AI 提议和棋',
+      sub: 'AI 正在评估当前局面…',
+      waiting: true,
+      waitingText: 'AI 正在思考是否接受…'
+    });
+    render();
+    drawFlow.timer = setTimeout(() => {
+      drawFlow.timer = null;
+      if (drawFlow.mode !== 'ai' || !drawFlow.active || state.gameOver || state.mode !== 'ai') return;
+      const aiSide = otherSide(humanSide);
+      const score = Engine.evaluateBoard(state.board, aiSide);
+      const accept = score < -80 || (score < 150 && Math.random() < 0.35);
+      drawFlow.active = false;
+      drawFlow.role = null;
+      if (accept) {
+        finishGame({ winner: null, endType: 'draw', reason: '和棋' });
+        showDrawResult('AI 接受和棋', 'AI 接受了你的和棋请求。', '本局以平局结束。', true);
+        showToast('AI 接受了和棋');
+      } else {
+        showDrawResult('AI 拒绝和棋', 'AI 拒绝了你的和棋请求。', '对局继续。', false);
+        showToast('AI 拒绝和棋，对局继续');
+      }
+      render();
+    }, 950);
+  }
+
+  function requestDraw() {
+    if (!canOfferDrawNow()) return;
+    if (state.mode === 'online') {
+      const side = state.net.mySide;
+      drawFlow.active = true;
+      drawFlow.mode = 'online';
+      drawFlow.role = 'offeror';
+      drawFlow.offeror = side;
+      if (!netSend({ type: 'drawOffer', gameId: state.net.gameId })) {
+        clearDrawFlow();
+        showToast('连接已断开，无法发起和棋');
+        return;
+      }
+      if (drawFlow.timer) clearTimeout(drawFlow.timer);
+      drawFlow.timer = setTimeout(() => {
+        if (!drawFlow.active || drawFlow.role !== 'offeror' || drawFlow.mode !== 'online') return;
+        netSend({ type: 'drawCancel', gameId: state.net.gameId });
+        clearDrawFlow();
+        if (state.net.role === 'guest') requestBoardSync();
+        render();
+        showToast('和棋请求超时，已自动取消');
+      }, 20000);
+      render();
+      showToast('已发起和棋请求，等待对方回应…');
+      return;
+    }
+    if (state.mode === 'ai') {
+      startAiDrawOffer();
+      return;
+    }
+    const offeror = state.turn;
+    openIncomingDrawDialog(offeror, 'local');
+  }
+
+  function respondToDraw(accepted) {
+    if (!drawFlow.active || drawFlow.role === 'offeror') return;
+    if (drawFlow.mode === 'local') {
+      clearDrawFlow();
+      if (accepted) {
+        finishGame({ winner: null, endType: 'draw', reason: '和棋' });
+        showToast('双方同意和棋，本局平局');
+      } else {
+        render();
+        showToast('已拒绝和棋，对局继续');
+      }
+      return;
+    }
+    if (drawFlow.mode !== 'online') return;
+
+    const net = state.net;
+    if (!net.connected || net.phase !== 'playing') {
+      clearDrawFlow();
+      render();
+      return;
+    }
+    if (net.role === 'host') {
+      clearDrawFlow();
+      if (accepted) {
+        finishGame({ winner: null, endType: 'draw', reason: '和棋' });
+        netSend({ type: 'drawResult', accepted: true, gameId: net.gameId });
+        showToast('双方同意和棋，本局平局');
+      } else {
+        netSend({ type: 'drawResult', accepted: false, gameId: net.gameId });
+        render();
+        showToast('已拒绝和棋，对局继续');
+      }
+      return;
+    }
+    if (net.role === 'guest') {
+      drawFlow.role = 'responder';
+      if (!netSend({ type: 'drawResponse', accepted, gameId: net.gameId })) {
+        clearDrawFlow();
+        requestBoardSync();
+        render();
+        showToast('连接异常，和棋请求未发出');
+        return;
+      }
+      if (drawFlow.timer) clearTimeout(drawFlow.timer);
+      drawFlow.timer = setTimeout(() => {
+        if (!drawFlow.active || drawFlow.mode !== 'online' || drawFlow.role !== 'responder') return;
+        clearDrawFlow();
+        requestBoardSync();
+        render();
+        showToast('和棋结果同步超时，对局继续');
+      }, 8000);
+      setDrawDialogContent({
+        title: accepted ? '已接受和棋' : '已拒绝和棋',
+        message: '正在等待房主同步结果…',
+        sub: '请稍候，对局状态会自动更新。',
+        waiting: true,
+        waitingText: '同步和棋结果…'
+      });
+      render();
+    }
+  }
+
+  function handleOnlineDrawOffer(message) {
+    const net = state.net;
+    if (net.phase !== 'playing' || !net.connected || state.gameOver) return;
+    if (message.gameId !== net.gameId) return;
+    if (drawFlow.active) {
+      if (drawFlow.role === 'offeror' && drawFlow.mode === 'online') {
+        // 双方几乎同时发起和棋：视为互相接受，由房主结算。
+        if (net.role === 'host') {
+          clearDrawFlow();
+          finishGame({ winner: null, endType: 'draw', reason: '和棋' });
+          netSend({ type: 'drawResult', accepted: true, gameId: net.gameId });
+          showToast('双方同时提出和棋，本局平局');
+        } else {
+          netSend({ type: 'drawResponse', accepted: true, gameId: net.gameId });
+          setDrawDialogContent({
+            title: '双方都提议和棋',
+            message: '正在等待房主确认平局…',
+            sub: '对局状态会自动更新。',
+            waiting: true,
+            waitingText: '确认和棋中…'
+          });
+        }
+      }
+      return;
+    }
+    openIncomingDrawDialog(otherSide(net.mySide), 'online');
+  }
+
+  function handleOnlineDrawResponse(message) {
+    const net = state.net;
+    if (net.role !== 'host' || net.phase !== 'playing') return;
+    if (message.gameId !== net.gameId) return;
+    if (!drawFlow.active || drawFlow.role !== 'offeror') return;
+    const accepted = message.accepted === true;
+    clearDrawFlow();
+    if (accepted) {
+      finishGame({ winner: null, endType: 'draw', reason: '和棋' });
+      netSend({ type: 'drawResult', accepted: true, gameId: net.gameId });
+      showToast('对方接受和棋，本局平局');
+    } else {
+      netSend({ type: 'drawResult', accepted: false, gameId: net.gameId });
+      render();
+      showToast('对方拒绝和棋，对局继续');
+    }
+  }
+
+  function handleOnlineDrawResult(message) {
+    const net = state.net;
+    if (net.role !== 'guest' || net.phase !== 'playing') return;
+    if (message.gameId !== net.gameId) return;
+    const accepted = message.accepted === true;
+    if (!drawFlow.active && !accepted) return;
+    clearDrawFlow();
+    if (accepted) {
+      if (!state.gameOver) finishGame({ winner: null, endType: 'draw', reason: '和棋' });
+      showToast('房主确认和棋，本局平局');
+    } else {
+      render();
+      showToast('和棋未达成，对局继续');
+    }
+  }
+
+  function handleOnlineDrawCancel(message) {
+    if (message.gameId !== state.net.gameId) return;
+    if (!drawFlow.active || drawFlow.mode !== 'online') return;
+    clearDrawFlow();
+    render();
+    showToast('对方取消了和棋请求');
+  }
+
+  function handleOnlineResign(message) {
+    const net = state.net;
+    if (net.phase !== 'playing' || state.gameOver) return;
+    if (message.gameId !== net.gameId) return;
+    clearDrawFlow();
+    clearPendingMove();
+    closeDialog(dom.resignDialog);
+    finishGame({ winner: net.mySide, endType: 'resign', reason: '认输' });
+    showToast('对方已认输，你获胜');
   }
 
   function selectedMoves() {
@@ -1307,6 +2039,7 @@
   }
 
   function canUndo() {
+    if (state.endType === 'resign' || state.endType === 'draw') return false;
     return localUndoEnabled();
   }
 
@@ -1339,8 +2072,11 @@
 
   function restartCurrentGame() {
     if (state.mode === 'online') {
+      if (drawFlow.active) return;
       if (state.net.role !== 'host' || !state.net.connected || state.net.phase !== 'playing') return;
       if (!window.confirm('确定重新开始本局吗？双方棋盘将同时重置。')) return;
+      clearDrawFlow();
+      closeDialog(dom.resignDialog);
       state.net.gameId++;
       netSend({ type: 'restart', gameId: state.net.gameId });
       resetOnlineBoard();
@@ -1348,6 +2084,9 @@
       return;
     }
 
+    clearDrawFlow();
+    closeDialog(dom.resignDialog);
+    pendingResignSide = null;
     if (state.mode === 'ai') {
       cancelAiWork();
       resetBoardState(state.ai.humanSide);
@@ -1601,6 +2340,181 @@
     }
   }
 
+  function clearStartRetryTimer(net = state.net) {
+    if (net.startRetryTimer) {
+      clearTimeout(net.startRetryTimer);
+      net.startRetryTimer = null;
+    }
+  }
+
+  function clearRpsRetryTimer(net = state.net) {
+    if (net.rpsRetryTimer) {
+      clearTimeout(net.rpsRetryTimer);
+      net.rpsRetryTimer = null;
+    }
+  }
+
+  function armRpsStartWatch() {
+    const net = state.net;
+    clearRpsRetryTimer(net);
+    if (net.role !== 'host' || net.phase !== 'rps') return;
+    net.rpsAckReceived = false;
+    net.rpsRetries = 0;
+    const schedule = () => {
+      net.rpsRetryTimer = setTimeout(() => {
+        net.rpsRetryTimer = null;
+        if (state.net !== net || net.closing || net.phase !== 'rps' || net.rpsAckReceived) return;
+        if (net.rpsRetries < 2) {
+          net.rpsRetries++;
+          netSend({ type: 'rpsStart' });
+          schedule();
+          return;
+        }
+        showToast('对方未进入选边对决，请检查网络后重开房间', 4800);
+      }, 1500);
+    };
+    schedule();
+  }
+
+  function sendRpsReady() {
+    if (state.net.role !== 'guest' || state.net.phase !== 'rps') return;
+    netSend({ type: 'rpsReady' });
+  }
+
+  function hostHandleRpsReady() {
+    if (state.net.role !== 'host') return;
+    state.net.rpsAckReceived = true;
+    clearRpsRetryTimer(state.net);
+  }
+
+  function sendGameReady() {
+    const net = state.net;
+    if (net.role !== 'guest' || net.phase !== 'playing') return;
+    netSend({ type: 'gameReady', gameId: net.gameId });
+  }
+
+  function armStartAckWatch() {
+    const net = state.net;
+    clearStartRetryTimer(net);
+    if (net.role !== 'host' || net.phase !== 'playing') return;
+    net.startAcked = false;
+    net.startWarning = false;
+    net.startRetries = 0;
+
+    const schedule = () => {
+      net.startRetryTimer = setTimeout(() => {
+        net.startRetryTimer = null;
+        if (state.net !== net || net.closing || net.phase !== 'playing' || net.startAcked || state.gameOver) return;
+        if (net.startRetries < 2) {
+          net.startRetries++;
+          netSend({
+            type: 'start',
+            hostSide: net.hostSide,
+            guestSide: net.guestSide,
+            gameId: net.gameId
+          });
+          schedule();
+          return;
+        }
+        net.startWarning = true;
+        render();
+        showToast('对方尚未确认开局，请检查网络或重开房间', 4800);
+      }, 1600);
+    };
+    schedule();
+  }
+
+  function hostHandleGameReady(message) {
+    const net = state.net;
+    if (net.role !== 'host' || net.phase !== 'playing') return;
+    if (message.gameId !== net.gameId) return;
+    net.startAcked = true;
+    net.startWarning = false;
+    clearStartRetryTimer(net);
+    render();
+  }
+
+  function sendBoardSync() {
+    const net = state.net;
+    if (net.role !== 'host' || net.phase !== 'playing' || !net.connected) return;
+    netSend({
+      type: 'syncState',
+      gameId: net.gameId,
+      board: Engine.cloneBoard(state.board),
+      turn: state.turn,
+      moves: state.moves.map(move => ({
+        ...move,
+        from: { ...move.from },
+        to: { ...move.to }
+      })),
+      lastMove: state.lastMove
+        ? { from: { ...state.lastMove.from }, to: { ...state.lastMove.to } }
+        : null,
+      gameOver: state.gameOver,
+      winner: state.winner,
+      endReason: state.endReason,
+      endType: state.endType,
+      hostSide: net.hostSide,
+      guestSide: net.guestSide
+    });
+  }
+
+  function requestBoardSync() {
+    const net = state.net;
+    if (net.role !== 'guest' || net.phase !== 'playing' || !net.connected) return;
+    netSend({ type: 'syncRequest', gameId: net.gameId });
+  }
+
+  function applyBoardSync(message) {
+    const net = state.net;
+    if (net.role !== 'guest' || net.phase !== 'playing' || !net.connected) return;
+    if (message.gameId !== net.gameId) return;
+    if (!Array.isArray(message.board) || message.board.length !== Engine.ROWS) return;
+    const normalized = [];
+    for (const row of message.board) {
+      if (!Array.isArray(row) || row.length !== Engine.COLS) return;
+      normalized.push(row.map(piece => piece && isSide(piece.side) &&
+        ['k', 'a', 'e', 'h', 'r', 'c', 'p'].includes(piece.type)
+        ? { side: piece.side, type: piece.type }
+        : null));
+    }
+    clearPendingMove();
+    state.board = normalized;
+    state.turn = isSide(message.turn) ? message.turn : 'red';
+    state.moves = Array.isArray(message.moves) ? message.moves.map(move => ({
+      ...move,
+      from: move && move.from ? { ...move.from } : { r: 0, c: 0 },
+      to: move && move.to ? { ...move.to } : { r: 0, c: 0 }
+    })) : [];
+    state.lastMove = message.lastMove && message.lastMove.from && message.lastMove.to
+      ? {
+        from: { ...message.lastMove.from },
+        to: { ...message.lastMove.to }
+      }
+      : null;
+    state.gameOver = Boolean(message.gameOver);
+    state.winner = isSide(message.winner) ? message.winner : null;
+    state.endReason = typeof message.endReason === 'string' ? message.endReason : '';
+    state.endType = typeof message.endType === 'string' ? message.endType : null;
+    state.inCheck = Engine.isInCheck(state.board, state.turn);
+    state.selected = null;
+    if (isSide(message.hostSide)) net.hostSide = message.hostSide;
+    if (isSide(message.guestSide)) net.guestSide = message.guestSide;
+    net.startAcked = true;
+    net.startWarning = false;
+    clearStartRetryTimer(net);
+    if (state.gameOver) {
+      clearDrawFlow();
+      closeDialog(dom.resignDialog);
+    }
+    render();
+  }
+
+  function handleProtocolMismatch() {
+    netSend({ type: 'protocolError' });
+    handleConnectionLost('双方页面版本不一致，请刷新页面后重新建房');
+  }
+
   function generateRoomCode() {
     const values = new Uint32Array(1);
     if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(values);
@@ -1613,6 +2527,8 @@
     if (net.pendingTimer) clearTimeout(net.pendingTimer);
     if (net.joinTimer) clearTimeout(net.joinTimer);
     if (net.handshakeTimer) clearTimeout(net.handshakeTimer);
+    clearStartRetryTimer(net);
+    clearRpsRetryTimer(net);
     net.pendingTimer = null;
     net.joinTimer = null;
     net.handshakeTimer = null;
@@ -1629,6 +2545,8 @@
     try { if (net.peer) net.peer.destroy(); } catch { /* ignore */ }
     state.net = freshNetState();
     closeRpsDialog(false);
+    clearDrawFlow();
+    closeDialog(dom.resignDialog);
     dom.leaveRoomBtn.hidden = true;
   }
 
@@ -1762,7 +2680,7 @@
 
     let peer;
     try {
-      peer = new Peer(`xq1-${code}`, { debug: 0 });
+      peer = new Peer(`xq1-${code}`, createPeerOptions());
     } catch {
       showRoomError('无法初始化联机连接，请检查浏览器是否支持 WebRTC。');
       disposeOnline(false);
@@ -1851,7 +2769,7 @@
 
     let peer;
     try {
-      peer = new Peer(undefined, { debug: 0 });
+      peer = new Peer(undefined, createPeerOptions());
     } catch {
       showRoomError('无法初始化联机连接，请检查浏览器是否支持 WebRTC。');
       return;
@@ -1916,6 +2834,7 @@
       enterOnlineLobby();
       netSend({
         type: 'welcome',
+        protocolVersion: PROTOCOL_VERSION,
         hostSide: net.hostSide,
         guestSide: net.guestSide
       });
@@ -1949,7 +2868,7 @@
         net.joinTimer = null;
       }
       enterOnlineLobby();
-      netSend({ type: 'hello' });
+      netSend({ type: 'hello', protocolVersion: PROTOCOL_VERSION });
       updateLobby('已连接，正在等待房主信息…', 'online');
       net.handshakeTimer = setTimeout(() => {
         if (state.net === net && net.connected && !net.closing && net.phase === 'lobby' && !net.hostSide) {
@@ -2077,6 +2996,13 @@
     const net = state.net;
     switch (message.type) {
       case 'hello':
+        if (message.protocolVersion !== PROTOCOL_VERSION) handleProtocolMismatch();
+        break;
+      case 'gameReady':
+        hostHandleGameReady(message);
+        break;
+      case 'syncRequest':
+        if (net.phase === 'playing' && message.gameId === net.gameId) sendBoardSync();
         break;
       case 'side':
         if (net.phase !== 'lobby' || !isSide(message.side)) break;
@@ -2090,6 +3016,24 @@
       case 'rpsPick':
         hostReceiveRpsPick(message);
         break;
+      case 'rpsReady':
+        hostHandleRpsReady();
+        break;
+      case 'drawOffer':
+        handleOnlineDrawOffer(message);
+        break;
+      case 'drawResponse':
+        handleOnlineDrawResponse(message);
+        break;
+      case 'drawCancel':
+        handleOnlineDrawCancel(message);
+        break;
+      case 'resign':
+        handleOnlineResign(message);
+        break;
+      case 'protocolError':
+        handleConnectionLost('双方页面版本不一致，请刷新页面后重新建房');
+        break;
       case 'leave':
         handleConnectionLost('对方已离开，房间已关闭');
         break;
@@ -2102,6 +3046,10 @@
     const net = state.net;
     switch (message.type) {
       case 'welcome':
+        if (message.protocolVersion !== PROTOCOL_VERSION) {
+          handleProtocolMismatch();
+          break;
+        }
         if (net.handshakeTimer) {
           clearTimeout(net.handshakeTimer);
           net.handshakeTimer = null;
@@ -2118,18 +3066,30 @@
         break;
       case 'start':
         if (isSide(message.hostSide) && isSide(message.guestSide) && message.hostSide !== message.guestSide) {
+          if (net.phase === 'playing' && message.gameId === net.gameId) {
+            sendGameReady();
+            break;
+          }
           beginOnlineGame(message.hostSide, message.guestSide, message.gameId);
         }
+        break;
+      case 'syncState':
+        applyBoardSync(message);
         break;
       case 'move':
         receiveGuestMove(message);
         break;
       case 'moveRejected':
         clearPendingMove();
+        requestBoardSync();
         render();
-        showToast('落子未通过同步，请再试一次');
+        showToast('落子未通过同步，正在刷新棋盘…');
         break;
       case 'rpsStart':
+        if (rps.active && net.phase === 'rps') {
+          sendRpsReady();
+          break;
+        }
         beginRpsGuest();
         break;
       case 'rpsReveal':
@@ -2142,8 +3102,27 @@
         if (net.phase === 'playing') {
           if (Number.isInteger(message.gameId)) net.gameId = message.gameId;
           resetOnlineBoard();
+          net.startAcked = true;
+          net.startWarning = false;
+          clearStartRetryTimer(net);
+          sendGameReady();
           showToast('房主重新开始了对局');
         }
+        break;
+      case 'drawOffer':
+        handleOnlineDrawOffer(message);
+        break;
+      case 'drawResult':
+        handleOnlineDrawResult(message);
+        break;
+      case 'drawCancel':
+        handleOnlineDrawCancel(message);
+        break;
+      case 'resign':
+        handleOnlineResign(message);
+        break;
+      case 'protocolError':
+        handleConnectionLost('双方页面版本不一致，请刷新页面后重新建房');
         break;
       case 'leave':
         handleConnectionLost('对方已离开，房间已关闭');
@@ -2190,8 +3169,9 @@
     net.pendingTimer = setTimeout(() => {
       if (state.net.pendingMove) {
         clearPendingMove();
+        requestBoardSync();
         render();
-        showToast('落子同步超时，请重试');
+        showToast('落子同步超时，正在刷新棋盘…');
       }
     }, 6000);
     if (!netSend({ type: 'moveRequest', from, to, gameId: net.gameId })) {
@@ -2215,7 +3195,8 @@
     clearPendingMove();
     const result = applyMove(from, to, { recordHistory: false });
     if (!result) {
-      showToast('同步异常，请重新进入房间');
+      requestBoardSync();
+      showToast('同步异常，正在刷新棋盘…');
     }
     render();
   }
@@ -2236,6 +3217,7 @@
       net.phase = 'rps';
       beginRpsHost();
       netSend({ type: 'rpsStart' });
+      armRpsStartWatch();
     } else {
       const gameId = (net.gameId || 0) + 1;
       net.gameId = gameId;
@@ -2257,6 +3239,7 @@
     cancelAiWork();
     closeDialog(dom.setupDialog);
     closeRpsDialog(false);
+    closeAllDialogs();
     state.mode = 'online';
     net.phase = 'playing';
     net.hostSide = hostSide;
@@ -2265,8 +3248,14 @@
     net.gameId = Number.isInteger(gameId) ? gameId : (net.gameId || 0) + 1;
     net.pendingMove = false;
     clearPendingMove();
+    clearStartRetryTimer(net);
+    net.startAcked = net.role !== 'host';
+    net.startWarning = false;
+    net.startRetries = 0;
     resetBoardState(net.mySide);
     render();
+    if (net.role === 'guest') sendGameReady();
+    else armStartAckWatch();
     showToast(`对局开始 · 你执${SIDE_COLOR_NAME[net.mySide]}`);
   }
 
@@ -2275,6 +3264,9 @@
     if (net.phase !== 'playing') return;
     clearPendingMove();
     cancelAiWork();
+    clearStartRetryTimer(net);
+    net.startAcked = true;
+    net.startWarning = false;
     resetBoardState(net.mySide || 'red');
     render();
   }
@@ -2339,7 +3331,7 @@
   }
 
   function beginRpsHost() {
-    closeDialog(dom.setupDialog);
+    closeAllDialogs();
     const net = state.net;
     Object.assign(rps, {
       active: true,
@@ -2361,7 +3353,7 @@
   }
 
   function beginRpsGuest() {
-    closeDialog(dom.setupDialog);
+    closeAllDialogs();
     const net = state.net;
     Object.assign(rps, {
       active: true,
@@ -2379,6 +3371,7 @@
     net.phase = 'rps';
     updateRpsUi();
     showDialog(dom.rpsDialog);
+    sendRpsReady();
     render();
   }
 
@@ -2484,8 +3477,9 @@
       clearTimeout(rps.timer);
       rps.timer = null;
     }
+    clearRpsRetryTimer();
     if (!keepActive) rps.active = false;
-    if (dom.rpsDialog.open) dom.rpsDialog.close();
+    closeDialog(dom.rpsDialog);
   }
 
   /* ======================================================================
@@ -2513,10 +3507,41 @@
     });
 
     dom.undoBtn.addEventListener('click', undoMove);
+    dom.drawBtn.addEventListener('click', requestDraw);
+    dom.resignBtn.addEventListener('click', openResignDialog);
     dom.restartBtn.addEventListener('click', restartCurrentGame);
-    dom.soundBtn.addEventListener('click', toggleSound);
+    dom.soundBtn.addEventListener('click', openSoundDialog);
     dom.leaveRoomBtn.addEventListener('click', exitRoom);
     dom.exitLobbyBtn.addEventListener('click', exitRoom);
+    dom.board.addEventListener('contextmenu', event => event.preventDefault());
+
+    dom.resignCancelBtn.addEventListener('click', () => {
+      closeDialog(dom.resignDialog);
+      pendingResignSide = null;
+    });
+    dom.resignConfirmBtn.addEventListener('click', confirmResign);
+    dom.resignDialog.addEventListener('close', () => {
+      pendingResignSide = null;
+    });
+    dom.drawAcceptBtn.addEventListener('click', () => respondToDraw(true));
+    dom.drawDeclineBtn.addEventListener('click', () => respondToDraw(false));
+    dom.drawOkBtn.addEventListener('click', () => {
+      clearDrawFlow();
+      render();
+    });
+    dom.drawDialog.addEventListener('cancel', event => {
+      if (dom.drawOkBtn.hidden) event.preventDefault();
+    });
+    dom.soundCloseBtn.addEventListener('click', () => closeDialog(dom.soundDialog));
+    dom.soundOptions.addEventListener('click', event => {
+      const btn = event.target.closest('[data-sound]');
+      if (btn) selectSoundPreset(btn.dataset.sound);
+    });
+    dom.soundVolume.addEventListener('input', event => setSoundVolume(event.target.value));
+    dom.soundVolume.addEventListener('change', () => {
+      if (state.soundOn) playPresetSound(state.soundPreset, false);
+    });
+    dom.soundMuteBtn.addEventListener('click', toggleSoundMute);
 
     dom.modeLocalBtn.addEventListener('click', () => {
       if (state.mode === 'online') {
@@ -2600,6 +3625,21 @@
       if (rps.active) event.preventDefault();
     });
 
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' &&
+          state.mode === 'online' &&
+          state.net.role === 'guest' &&
+          state.net.phase === 'playing') {
+        requestBoardSync();
+      }
+    });
+
+    window.addEventListener('pageshow', event => {
+      if (event.persisted && state.mode === 'online' && state.net.role === 'guest' && state.net.phase === 'playing') {
+        requestBoardSync();
+      }
+    });
+
     window.addEventListener('beforeunload', () => {
       if (state.net.conn && state.net.conn.open) {
         try { state.net.conn.send({ type: 'leave' }); } catch { /* ignore */ }
@@ -2610,6 +3650,7 @@
   function initialize() {
     bindEvents();
     document.addEventListener('pointerdown', () => ensureAudioContext(), { once: true, capture: true });
+    if (dom.versionLabel) dom.versionLabel.textContent = `v${APP_VERSION}`;
     state.mode = 'local';
     state.board = Engine.initialBoard();
     state.turn = 'red';
@@ -2629,6 +3670,7 @@
       Engine,
       state,
       rps,
+      drawFlow,
       getState: () => ({
         mode: state.mode,
         turn: state.turn,
@@ -2636,9 +3678,22 @@
         moves: state.moves.map(move => ({ ...move, from: { ...move.from }, to: { ...move.to } })),
         gameOver: state.gameOver,
         winner: state.winner,
+        endType: state.endType,
+        endReason: state.endReason,
         inCheck: state.inCheck,
         selected: state.selected ? { ...state.selected } : null,
         orientation: state.orientation,
+        sound: {
+          on: state.soundOn,
+          preset: state.soundPreset,
+          volume: state.soundVolume
+        },
+        draw: {
+          active: drawFlow.active,
+          mode: drawFlow.mode,
+          role: drawFlow.role,
+          offeror: drawFlow.offeror
+        },
         net: {
           role: state.net.role,
           phase: state.net.phase,
@@ -2648,6 +3703,8 @@
           hostSide: state.net.hostSide,
           guestSide: state.net.guestSide,
           pendingMove: state.net.pendingMove,
+          startAcked: state.net.startAcked,
+          startWarning: state.net.startWarning,
           gameId: state.net.gameId
         }
       }),
@@ -2659,8 +3716,17 @@
       startAIGame,
       startLocalGame,
       startOnlineGame: beginOnlineGame,
+      openResignDialog,
+      confirmResign,
+      requestDraw,
+      respondToDraw,
+      openSoundDialog,
+      selectSoundPreset,
+      setSoundVolume,
+      playPresetSound,
       setPosition: (boardData, turn = 'red') => {
         cancelAiWork();
+        clearDrawFlow();
         state.mode = 'local';
         state.board = boardData.map(row => row.map(p => p ? { side: p.side, type: p.type } : null));
         state.turn = turn;
@@ -2671,6 +3737,7 @@
         state.gameOver = false;
         state.winner = null;
         state.endReason = '';
+        state.endType = null;
         state.inCheck = Engine.isInCheck(state.board, turn);
         state.orientation = 'red';
         render();
@@ -2684,7 +3751,8 @@
       perft: (depth, side = state.turn) => {
         const b = Engine.cloneBoard(state.board);
         return Engine.perft(b, side, depth);
-      }
+      },
+      getAudioLevel: () => (audioMaster ? audioMaster.gain.value : null)
     };
   }
 })();

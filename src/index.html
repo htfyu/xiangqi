@@ -4,7 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#ffffff" />
-<meta name="description" content="极简中国象棋：本地双人、三档 AI 对战与好友房间联机。" />
+<meta name="color-scheme" content="light" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta name="description" content="极简中国象棋：本地双人、三档 AI 对战与好友房间联机，支持认输、和棋与五种落子音效。" />
 <title>中国象棋 · 极简对弈</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='27' fill='white' stroke='%23191919' stroke-width='3'/%3E%3Ctext x='32' y='44' font-family='serif' font-size='36' font-weight='700' text-anchor='middle' fill='%23c53a3a'%3E%E5%B8%85%3C/text%3E%3C/svg%3E" />
 <style>
@@ -26,8 +29,11 @@
     --radius: 22px;
     font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
   }
-  * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html {
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+  }
   body {
     margin: 0;
     min-width: 320px;
@@ -36,9 +42,14 @@
     color: var(--ink);
     font-family: inherit;
     -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+    touch-action: manipulation;
   }
   button, input { font: inherit; }
-  button { color: inherit; }
+  button { color: inherit; touch-action: manipulation; }
+  button, .btn, .mode-btn, .choice-card, .side-card, .rps-choice, .sound-option, .draw-choice {
+    -webkit-tap-highlight-color: transparent;
+  }
   button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 3px;
@@ -296,6 +307,10 @@
     position: relative;
     border-radius: 12px;
     overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
   }
   svg#board {
     display: block;
@@ -304,8 +319,16 @@
     background: #fff;
     user-select: none;
     -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
     cursor: default;
+  }
+  svg#board text,
+  svg#board .river-text {
+    pointer-events: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
   svg#board.can-play { cursor: pointer; }
   .board-line { fill: none; stroke: var(--line-strong); stroke-width: 1.35; stroke-linecap: square; }
@@ -393,6 +416,25 @@
   .btn.primary:hover:not(:disabled) { background: #3b3b39; border-color: #3b3b39; }
   .btn.subtle { border-color: transparent; background: transparent; color: var(--muted); }
   .btn.subtle:hover:not(:disabled) { background: var(--wash); border-color: transparent; }
+  .btn.draw { border-color: #d7d2c8; }
+  .btn.draw:hover:not(:disabled) { border-color: #a39d91; background: #faf9f6; }
+  .btn.resign {
+    border-color: #e4cccc;
+    color: #a53b3b;
+  }
+  .btn.resign:hover:not(:disabled) {
+    border-color: #c99191;
+    background: #fcf4f4;
+  }
+  .btn.danger-solid {
+    border-color: var(--red);
+    background: var(--red);
+    color: #fff;
+  }
+  .btn.danger-solid:hover:not(:disabled) {
+    border-color: #a93030;
+    background: #a93030;
+  }
   .btn.wide { width: 100%; padding: 12px 16px; font-size: 13px; }
   .btn .btn-icon { margin-right: 4px; opacity: .8; }
   .move-panel {
@@ -795,6 +837,206 @@
     color: var(--muted); font-size: 9.5px; line-height: 1.6;
   }
 
+  /* ---------- Resign / draw / sound dialogs ---------- */
+  dialog#resignDialog { width: min(92vw, 410px); }
+  dialog#drawDialog { width: min(92vw, 440px); }
+  dialog#soundDialog { width: min(92vw, 510px); }
+  .confirm-inner { text-align: center; }
+  .confirm-inner .eyebrow { margin-bottom: 7px; }
+  .resign-message {
+    margin: 16px 0 0;
+    color: var(--ink-soft);
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 1.7;
+  }
+  .resign-warning {
+    margin: 8px 0 0;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.7;
+  }
+  .confirm-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 20px;
+  }
+  .confirm-actions .btn { padding: 11px 12px; }
+  .draw-inner { text-align: center; }
+  .draw-symbol {
+    width: 58px; height: 58px;
+    margin: 0 auto 13px;
+    display: grid; place-items: center;
+    border: 1.6px solid var(--ink);
+    border-radius: 50%;
+    background: #fff;
+    font-family: "SimSun", "Songti SC", serif;
+    font-size: 28px; font-weight: 700; line-height: 1;
+  }
+  .draw-inner .eyebrow { margin-bottom: 5px; }
+  .draw-inner h2 { font-size: 21px; }
+  .draw-message {
+    margin: 15px 0 0;
+    color: var(--ink);
+    font-size: 15px;
+    font-weight: 650;
+    line-height: 1.65;
+  }
+  .draw-sub {
+    margin: 7px 0 0;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.65;
+  }
+  .draw-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+    margin-top: 20px;
+  }
+  .draw-choice {
+    appearance: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-height: 76px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    background: #fff;
+    color: var(--ink-soft);
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+    transition: border-color .14s ease, background .14s ease, transform .14s ease;
+  }
+  .draw-choice:hover { border-color: #a9a398; background: var(--wash); }
+  .draw-choice:active { transform: translateY(1px); }
+  .draw-choice.accept {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: #fff;
+  }
+  .draw-choice.accept:hover { background: #3a3a38; border-color: #3a3a38; }
+  .draw-mark { font-size: 27px; font-weight: 400; line-height: 1; }
+  .draw-waiting {
+    display: flex; align-items: center; justify-content: center; gap: 9px;
+    margin-top: 20px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--wash);
+    color: var(--muted);
+    font-size: 10.5px;
+  }
+  .spinner {
+    width: 15px; height: 15px;
+    border: 2px solid #d7d2c8;
+    border-top-color: var(--ink);
+    border-radius: 50%;
+    animation: audio-spin .8s linear infinite;
+  }
+  .draw-note {
+    margin: 13px 0 0;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.65;
+  }
+  .draw-inner .btn.wide { margin-top: 16px; }
+  .sound-options { display: flex; flex-direction: column; gap: 7px; margin-top: 17px; }
+  .sound-option {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .14s ease, background .14s ease, box-shadow .14s ease;
+  }
+  .sound-option:hover { border-color: #b7b1a6; background: #fcfbf9; }
+  .sound-option[aria-pressed="true"] {
+    border-color: var(--ink);
+    background: #f3f2ee;
+    box-shadow: inset 0 0 0 1px var(--ink);
+  }
+  .sound-symbol {
+    width: 33px; height: 33px; flex: 0 0 auto;
+    display: grid; place-items: center;
+    border: 1.3px solid var(--ink); border-radius: 50%;
+    background: #fff;
+    font-family: "SimSun", "Songti SC", serif;
+    font-size: 16px; font-weight: 700; line-height: 1;
+  }
+  .sound-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .sound-copy strong { font-size: 11.5px; font-weight: 650; }
+  .sound-copy small { color: var(--muted); font-size: 9px; line-height: 1.4; }
+  .sound-check {
+    margin-left: auto;
+    flex: 0 0 auto;
+    color: var(--muted-2);
+    font-size: 8.5px;
+    letter-spacing: .05em;
+  }
+  .sound-option[aria-pressed="true"] .sound-check { color: var(--ink); font-weight: 650; }
+  .sound-volume {
+    margin-top: 16px;
+    padding: 12px 13px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--wash);
+  }
+  .sound-volume-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .sound-volume-head strong { color: var(--ink); font-size: 11px; font-variant-numeric: tabular-nums; }
+  #soundVolume {
+    width: 100%;
+    height: 24px;
+    margin: 0;
+    accent-color: var(--ink);
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .sound-actions { margin-top: 13px; }
+  .version-label {
+    display: inline-block;
+    margin-left: 6px;
+    color: #b4afa6;
+    font-size: 8.5px;
+    letter-spacing: .04em;
+  }
+
+  /* Fallback styling in browsers without native <dialog> top-layer support. */
+  body.fallback-modal::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    background: rgba(25, 23, 19, .36);
+  }
+  dialog.modal.fallback-open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 901;
+    margin: auto;
+    height: fit-content;
+    max-height: 88vh;
+    overflow: auto;
+  }
+  @keyframes audio-spin { to { transform: rotate(360deg); } }
+
   /* ---------- Toast ---------- */
   #toast {
     position: fixed;
@@ -877,6 +1119,19 @@
     .side-piece { width: 33px; height: 33px; font-size: 18px; }
     .room-code { font-size: 22px; }
     .room-banner { padding: 11px 12px; }
+    .controls .btn { padding: 7px 9px; }
+    .confirm-actions { gap: 6px; }
+    .draw-actions { gap: 6px; margin-top: 16px; }
+    .draw-choice { min-height: 68px; padding: 8px; }
+    .draw-message { font-size: 13px; }
+    .draw-symbol { width: 50px; height: 50px; font-size: 24px; margin-bottom: 10px; }
+    .sound-option { gap: 9px; padding: 8px 9px; }
+    .sound-symbol { width: 29px; height: 29px; font-size: 14px; }
+    .sound-copy strong { font-size: 11px; }
+    .sound-copy small { font-size: 8.5px; }
+    .sound-check { display: none; }
+    .sound-volume { padding: 10px 11px; }
+    .version-label { font-size: 8px; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
@@ -922,7 +1177,7 @@
         <p id="railInfoTitle" class="rail-info-title">自我对战</p>
         <p id="railInfoText" class="rail-info-text">同一屏幕轮流落子。红方先行，将死或困毙即胜。</p>
       </div>
-      <p class="rail-tip"><b>提示</b><br />点击己方棋子，再点击目标位置。带圆点的位置可走，带圆框的位置可吃子。</p>
+      <p class="rail-tip"><b>提示</b><br />点击己方棋子，再点击目标位置。带圆点的位置可走，带圆框的位置可吃子。<br />对局中可随时认输或向对方发起和棋。</p>
     </aside>
 
     <section class="game-card" aria-label="中国象棋对局">
@@ -977,8 +1232,10 @@
 
       <div class="controls">
         <button id="undoBtn" class="btn" type="button" disabled><span class="btn-icon" aria-hidden="true">↶</span>悔棋</button>
+        <button id="drawBtn" class="btn draw" type="button" disabled>和棋</button>
+        <button id="resignBtn" class="btn resign" type="button" disabled>认输</button>
         <button id="restartBtn" class="btn primary" type="button">重新开始</button>
-        <button id="soundBtn" class="btn subtle" type="button" aria-pressed="true"><span class="btn-icon" aria-hidden="true">◉</span><span id="soundLabel">音效开</span></button>
+        <button id="soundBtn" class="btn subtle" type="button" aria-haspopup="dialog"><span class="btn-icon" aria-hidden="true">♪</span><span id="soundLabel">音效</span></button>
         <button id="leaveRoomBtn" class="btn subtle" type="button" hidden>退出房间</button>
       </div>
 
@@ -990,8 +1247,8 @@
   </main>
 
   <footer class="site-footer">
-    基础规则对弈 · 将死或困毙判负 · 联机为点对点直连，双方需同时在线<br />
-    <span>含 <a href="https://peerjs.com" target="_blank" rel="noopener">PeerJS</a> 联机组件（MIT License）</span>
+    将死、困毙、认输判负 · 双方同意和棋则平局 · 联机为点对点直连，双方需同时在线<br />
+    <span>含 <a href="https://peerjs.com" target="_blank" rel="noopener">PeerJS</a> 联机组件（MIT License）<span id="versionLabel" class="version-label">v2.0</span></span>
   </footer>
 </div>
 
@@ -1070,6 +1327,7 @@
           </div>
         </div>
         <p id="roomError" class="form-error" role="alert" hidden></p>
+        <p class="micro-note">手机与电脑联机时请保持双方页面在前台；若一方没有收到开局，请双方刷新页面后重新建房。</p>
       </div>
 
       <div id="roomLobby" hidden>
@@ -1136,6 +1394,94 @@
       <p id="rpsResult" class="rps-result"></p>
     </div>
     <p id="rpsFooter" class="rps-footer">请选择你的手势</p>
+  </div>
+</dialog>
+
+<!-- ======================== 认输确认 ======================== -->
+<dialog id="resignDialog" class="modal" aria-labelledby="resignTitle">
+  <div class="modal-inner confirm-inner">
+    <p class="eyebrow">RESIGN · 认输确认</p>
+    <h2 id="resignTitle">确定认输？</h2>
+    <p id="resignMessage" class="resign-message">确认认输后，本局立即判负。</p>
+    <p class="resign-warning">认输后本局立即结束，不能通过悔棋撤销。</p>
+    <div class="confirm-actions">
+      <button id="resignCancelBtn" class="btn" type="button">取消</button>
+      <button id="resignConfirmBtn" class="btn danger-solid" type="button">确认认输</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ======================== 和棋请求 / AI 回应 ======================== -->
+<dialog id="drawDialog" class="modal" aria-labelledby="drawTitle">
+  <div class="modal-inner draw-inner">
+    <div class="draw-symbol" aria-hidden="true">和</div>
+    <p class="eyebrow">DRAW OFFER · 和棋请求</p>
+    <h2 id="drawTitle">和棋请求</h2>
+    <p id="drawMessage" class="draw-message">对方选择和棋，是否接受？</p>
+    <p id="drawSub" class="draw-sub">接受后本局立即以平局结束。</p>
+    <div id="drawWaiting" class="draw-waiting" hidden><span class="spinner" aria-hidden="true"></span><span id="drawWaitingText">等待对方回应…</span></div>
+    <div id="drawActions" class="draw-actions">
+      <button id="drawDeclineBtn" class="draw-choice decline" type="button">
+        <span class="draw-mark" aria-hidden="true">×</span>
+        <span>继续对弈</span>
+      </button>
+      <button id="drawAcceptBtn" class="draw-choice accept" type="button">
+        <span class="draw-mark" aria-hidden="true">√</span>
+        <span>接受和棋</span>
+      </button>
+    </div>
+    <button id="drawOkBtn" class="btn primary wide" type="button" hidden>继续对弈</button>
+    <p id="drawNote" class="draw-note" hidden></p>
+  </div>
+</dialog>
+
+<!-- ======================== 落子音效 ======================== -->
+<dialog id="soundDialog" class="modal" aria-labelledby="soundTitle">
+  <div class="modal-inner">
+    <button id="soundCloseBtn" class="modal-close" type="button" aria-label="关闭">×</button>
+    <p class="eyebrow">SOUND · 落子音效</p>
+    <h2 id="soundTitle">选择落子音效</h2>
+    <p class="modal-desc">五种实时合成音效。点击任意一项即可试听并选用。</p>
+
+    <div id="soundOptions" class="sound-options" role="group" aria-label="落子音效">
+      <button class="sound-option" type="button" data-sound="wood" aria-pressed="true">
+        <span class="sound-symbol" aria-hidden="true">木</span>
+        <span class="sound-copy"><strong>木击</strong><small>木棍与木棍敲击声</small></span>
+        <span class="sound-check">试听 / 选用</span>
+      </button>
+      <button class="sound-option" type="button" data-sound="stone" aria-pressed="false">
+        <span class="sound-symbol" aria-hidden="true">石</span>
+        <span class="sound-copy"><strong>石击</strong><small>鹅卵石与鹅卵石敲击声</small></span>
+        <span class="sound-check">试听 / 选用</span>
+      </button>
+      <button class="sound-option" type="button" data-sound="water" aria-pressed="false">
+        <span class="sound-symbol" aria-hidden="true">滴</span>
+        <span class="sound-copy"><strong>水滴</strong><small>溶洞里的水滴声</small></span>
+        <span class="sound-check">试听 / 选用</span>
+      </button>
+      <button class="sound-option" type="button" data-sound="keyboard" aria-pressed="false">
+        <span class="sound-symbol" aria-hidden="true">轴</span>
+        <span class="sound-copy"><strong>机械轴</strong><small>机械键盘轴体敲击声</small></span>
+        <span class="sound-check">试听 / 选用</span>
+      </button>
+      <button class="sound-option" type="button" data-sound="bomb" aria-pressed="false">
+        <span class="sound-symbol" aria-hidden="true">爆</span>
+        <span class="sound-copy"><strong>爆炸</strong><small>炸弹爆炸声</small></span>
+        <span class="sound-check">试听 / 选用</span>
+      </button>
+    </div>
+
+    <div class="sound-volume">
+      <div class="sound-volume-head">
+        <span>落子音量</span>
+        <strong id="soundVolumeValue">90%</strong>
+      </div>
+      <input id="soundVolume" type="range" min="0" max="100" step="1" value="90" aria-label="落子音效音量" />
+    </div>
+    <div class="sound-actions">
+      <button id="soundMuteBtn" class="btn wide" type="button">关闭音效</button>
+    </div>
+    <p class="micro-note">音效已提高输出响度，并加入压缩限幅，避免爆炸等音效削波。</p>
   </div>
 </dialog>
 
