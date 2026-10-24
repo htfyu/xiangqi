@@ -545,7 +545,7 @@
     hard: { label: '困难', minDelay: 520 }
   };
   const PROTOCOL_VERSION = 2;
-  const APP_VERSION = '2.0';
+  const APP_VERSION = '2.1';
   const SOUND_PRESETS = {
     wood: {
       label: '木击',
@@ -620,6 +620,7 @@
     turnDot: $('turnDot'),
     turnLabel: $('turnLabel'),
     statusText: $('statusText'),
+    checkHint: $('checkHint'),
     topPlayerRow: $('topPlayerRow'),
     bottomPlayerRow: $('bottomPlayerRow'),
     topAvatar: $('topAvatar'),
@@ -1300,6 +1301,7 @@
 
   function drawPieces() {
     const canPlay = canPlayNow();
+    const showResponses = canPlay && state.inCheck;
     dom.pieceLayer.replaceChildren();
     for (let r = 0; r < Engine.ROWS; r++) {
       for (let c = 0; c < Engine.COLS; c++) {
@@ -1308,12 +1310,15 @@
         const shown = displayPos(r, c);
         const isSelected = Boolean(state.selected && state.selected.r === r && state.selected.c === c);
         const playable = canPlay && piece.side === state.turn;
+        const canRespond = showResponses && piece.side === state.turn && piece.type !== 'k' &&
+          Engine.getLegalMoves(state.board, r, c, state.turn).length > 0;
         const classes = ['piece', piece.side];
         if (isSelected) classes.push('selected');
         if (playable) classes.push('is-playable');
+        if (canRespond) classes.push('can-respond');
         const g = svgEl('g', { class: classes.join(' ') });
         const title = svgEl('title');
-        title.textContent = `${SIDE_NAME[piece.side]}${LABELS[piece.side][piece.type]}`;
+        title.textContent = `${SIDE_NAME[piece.side]}${LABELS[piece.side][piece.type]}${canRespond ? '（可解将）' : ''}`;
         g.appendChild(title);
         if (isSelected) {
           g.appendChild(svgEl('circle', {
@@ -1321,6 +1326,14 @@
             cx: 32 + shown.c * 57,
             cy: 32 + shown.r * 56,
             r: 28
+          }));
+        }
+        if (canRespond) {
+          g.appendChild(svgEl('circle', {
+            class: 'response-ring',
+            cx: 32 + shown.c * 57,
+            cy: 32 + shown.r * 56,
+            r: 25
           }));
         }
         g.appendChild(svgEl('circle', {
@@ -1373,6 +1386,7 @@
     drawLastMoveAndCheck();
     drawSelectionAndTargets();
     drawPieces();
+    dom.checkHint.hidden = !(state.inCheck && !state.gameOver);
   }
 
   function renderPlayerRows() {
@@ -1489,7 +1503,7 @@
       dom.turnDot.classList.add(state.turn === 'green' ? 'green' : 'red');
       dom.turnLabel.textContent = `${currentSideName()}行棋`;
       if (state.inCheck) {
-        setStatus(`${currentSideName()}被将军！请解除将军`, 'alert');
+        setStatus(`${currentSideName()}被将军！可动任意解将棋子，允许弃子`, 'alert');
       } else if (state.selected) {
         setStatus('已选中棋子，请选择落点');
       } else if (state.mode === 'ai') {
@@ -1616,6 +1630,8 @@
       state.endType = state.inCheck ? 'checkmate' : 'stalemate';
       closeDialog(dom.soundDialog);
       closeDialog(dom.resignDialog);
+    } else if (state.inCheck) {
+      showToast(`${SIDE_NAME[state.turn]}被将军：可用其他棋子挡将或吃子解将，允许弃子`, 3200);
     }
     if (sound) playMoveSound(Boolean(captured));
     render();
@@ -1980,23 +1996,76 @@
     return Engine.getLegalMoves(state.board, state.selected.r, state.selected.c, state.turn);
   }
 
+  function explainRejectedMove(from, to, target) {
+    const piece = state.board[from.r] && state.board[from.r][from.c];
+    if (!piece) return '';
+    const reachesSquare = Engine.pseudoMoves(state.board, from.r, from.c)
+      .some(move => move.r === to.r && move.c === to.c);
+    if (!reachesSquare) {
+      return target
+        ? '这枚棋子不能吃这个位置，请选择带圆框标记的位置。'
+        : '这枚棋子不能走到这里，请选择带圆点标记的位置。';
+    }
+    if (state.inCheck) {
+      return '这步仍无法解除将军；可换其他棋子挡将、吃子，或移动帅/将。';
+    }
+    if (target && target.type === 'k') {
+      return '对局以将死结束，不能直接吃将。';
+    }
+    return '这步会让己方帅/将处于被将军状态（被牵制或将帅照面），不能走。';
+  }
+
   function handleBoardClick(r, c) {
     if (!canPlayNow()) return;
     const p = state.board[r][c];
+
     if (state.selected) {
+      const from = { ...state.selected };
       const legal = selectedMoves();
       if (legal.some(move => move.r === r && move.c === c)) {
-        makeLocalMove(state.selected, { r, c });
+        makeLocalMove(from, { r, c });
         return;
       }
-    }
-    if (p && p.side === state.turn) {
+      if (p && p.side === state.turn) {
+        if (from.r === r && from.c === c) {
+          state.selected = null;
+        } else {
+          state.selected = { r, c };
+        }
+      } else {
+        const feedback = explainRejectedMove(from, { r, c }, p);
+        renderBoard();
+        renderStatus();
+        if (feedback) {
+          setStatus(feedback, 'alert');
+          showToast(feedback, 2600);
+        }
+        return;
+      }
+    } else if (p && p.side === state.turn) {
       state.selected = { r, c };
+    } else if (p) {
+      const feedback = `现在轮到${SIDE_NAME[state.turn]}行棋，请选择己方棋子。`;
+      renderBoard();
+      renderStatus();
+      setStatus(feedback, 'alert');
+      return;
     } else {
       state.selected = null;
     }
+
     renderBoard();
     renderStatus();
+    if (state.selected) {
+      const moves = selectedMoves();
+      if (moves.length === 0) {
+        const feedback = state.inCheck
+          ? '这枚棋子无法解将，可换其他棋子挡将、吃子或移动帅/将。'
+          : '这枚棋子暂时没有合法落点，可改选其他棋子。';
+        setStatus(feedback, 'alert');
+        showToast(feedback, 2400);
+      }
+    }
   }
 
   function makeLocalMove(from, to) {
