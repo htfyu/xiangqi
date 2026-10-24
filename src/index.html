@@ -258,27 +258,6 @@
   }
   .status-text.alert { color: var(--red); font-weight: 650; }
   .status-text.good { color: var(--green); font-weight: 650; }
-  .check-hint {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin: 0 2px 7px;
-    padding: 6px 9px;
-    border: 1px solid #efdada;
-    border-radius: 8px;
-    background: #fdf5f5;
-    color: #9e3b3b;
-    font-size: 9.5px;
-    line-height: 1.55;
-  }
-  .check-hint-icon {
-    width: 15px; height: 15px; flex: 0 0 auto;
-    display: grid; place-items: center;
-    border: 1px solid currentColor;
-    border-radius: 50%;
-    font-size: 9px;
-    font-weight: 700;
-  }
 
   .player-row {
     display: flex;
@@ -1226,11 +1205,6 @@
         <span id="statusText" class="status-text" role="status" aria-live="polite">点击棋子，再点击目标位置</span>
       </div>
 
-      <div id="checkHint" class="check-hint" hidden>
-        <span class="check-hint-icon" aria-hidden="true">!</span>
-        <span>被将军：可动任意解将棋子；虚线环棋子可挡将或吃子，允许弃子。</span>
-      </div>
-
       <div id="topPlayerRow" class="player-row top">
         <span id="topAvatar" class="player-avatar green">将</span>
         <span id="topName" class="player-name">绿方</span>
@@ -1289,7 +1263,7 @@
 
   <footer class="site-footer">
     将死、困毙、认输判负 · 双方同意和棋则平局 · 联机为点对点直连，双方需同时在线<br />
-    <span>含 <a href="https://peerjs.com" target="_blank" rel="noopener">PeerJS</a> 联机组件（MIT License）<span id="versionLabel" class="version-label">v2.1</span></span>
+    <span>含 <a href="https://peerjs.com" target="_blank" rel="noopener">PeerJS</a> 联机组件（MIT License）<span id="versionLabel" class="version-label">v2.2</span></span>
   </footer>
 </div>
 

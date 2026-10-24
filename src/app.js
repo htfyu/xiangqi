@@ -545,7 +545,7 @@
     hard: { label: '困难', minDelay: 520 }
   };
   const PROTOCOL_VERSION = 2;
-  const APP_VERSION = '2.1';
+  const APP_VERSION = '2.2';
   const SOUND_PRESETS = {
     wood: {
       label: '木击',
@@ -620,7 +620,6 @@
     turnDot: $('turnDot'),
     turnLabel: $('turnLabel'),
     statusText: $('statusText'),
-    checkHint: $('checkHint'),
     topPlayerRow: $('topPlayerRow'),
     bottomPlayerRow: $('bottomPlayerRow'),
     topAvatar: $('topAvatar'),
@@ -1252,7 +1251,6 @@
     saveSoundPrefs();
     updateSoundButton();
     if (state.soundOn) playPresetSound(state.soundPreset, false);
-    showToast(state.soundOn ? '落子音效已开启' : '落子音效已关闭');
   }
 
   /* ======================================================================
@@ -1386,7 +1384,6 @@
     drawLastMoveAndCheck();
     drawSelectionAndTargets();
     drawPieces();
-    dom.checkHint.hidden = !(state.inCheck && !state.gameOver);
   }
 
   function renderPlayerRows() {
@@ -1503,7 +1500,7 @@
       dom.turnDot.classList.add(state.turn === 'green' ? 'green' : 'red');
       dom.turnLabel.textContent = `${currentSideName()}行棋`;
       if (state.inCheck) {
-        setStatus(`${currentSideName()}被将军！可动任意解将棋子，允许弃子`, 'alert');
+        setStatus('被将军！可弃子挡将或吃子', 'alert');
       } else if (state.selected) {
         setStatus('已选中棋子，请选择落点');
       } else if (state.mode === 'ai') {
@@ -1630,8 +1627,6 @@
       state.endType = state.inCheck ? 'checkmate' : 'stalemate';
       closeDialog(dom.soundDialog);
       closeDialog(dom.resignDialog);
-    } else if (state.inCheck) {
-      showToast(`${SIDE_NAME[state.turn]}被将军：可用其他棋子挡将或吃子解将，允许弃子`, 3200);
     }
     if (sound) playMoveSound(Boolean(captured));
     render();
@@ -1712,12 +1707,10 @@
       netSend({ type: 'resign', gameId: state.net.gameId });
       clearDrawFlow();
       finishGame({ winner: otherSide(side), endType: 'resign', reason: '认输' });
-      showToast('你已认输');
       return;
     }
     clearDrawFlow();
     finishGame({ winner: otherSide(side), endType: 'resign', reason: '认输' });
-    showToast(`${SIDE_NAME[side]}认输，${SIDE_NAME[otherSide(side)]}获胜`);
   }
 
   function setDrawDialogContent({ title, message, sub, waiting = false, actions = false, result = false, waitingText = '等待对方回应…', okText = '继续对弈', note = '' }) {
@@ -1803,10 +1796,8 @@
       if (accept) {
         finishGame({ winner: null, endType: 'draw', reason: '和棋' });
         showDrawResult('AI 接受和棋', 'AI 接受了你的和棋请求。', '本局以平局结束。', true);
-        showToast('AI 接受了和棋');
       } else {
         showDrawResult('AI 拒绝和棋', 'AI 拒绝了你的和棋请求。', '对局继续。', false);
-        showToast('AI 拒绝和棋，对局继续');
       }
       render();
     }, 950);
@@ -1832,10 +1823,9 @@
         clearDrawFlow();
         if (state.net.role === 'guest') requestBoardSync();
         render();
-        showToast('和棋请求超时，已自动取消');
+        setStatus('和棋请求已超时，对局继续');
       }, 20000);
       render();
-      showToast('已发起和棋请求，等待对方回应…');
       return;
     }
     if (state.mode === 'ai') {
@@ -1852,10 +1842,9 @@
       clearDrawFlow();
       if (accepted) {
         finishGame({ winner: null, endType: 'draw', reason: '和棋' });
-        showToast('双方同意和棋，本局平局');
       } else {
         render();
-        showToast('已拒绝和棋，对局继续');
+        setStatus('已拒绝和棋，对局继续');
       }
       return;
     }
@@ -1872,11 +1861,10 @@
       if (accepted) {
         finishGame({ winner: null, endType: 'draw', reason: '和棋' });
         netSend({ type: 'drawResult', accepted: true, gameId: net.gameId });
-        showToast('双方同意和棋，本局平局');
       } else {
         netSend({ type: 'drawResult', accepted: false, gameId: net.gameId });
         render();
-        showToast('已拒绝和棋，对局继续');
+        setStatus('已拒绝和棋，对局继续');
       }
       return;
     }
@@ -1895,7 +1883,7 @@
         clearDrawFlow();
         requestBoardSync();
         render();
-        showToast('和棋结果同步超时，对局继续');
+        setStatus('和棋结果同步超时，对局继续');
       }, 8000);
       setDrawDialogContent({
         title: accepted ? '已接受和棋' : '已拒绝和棋',
@@ -1919,7 +1907,6 @@
           clearDrawFlow();
           finishGame({ winner: null, endType: 'draw', reason: '和棋' });
           netSend({ type: 'drawResult', accepted: true, gameId: net.gameId });
-          showToast('双方同时提出和棋，本局平局');
         } else {
           netSend({ type: 'drawResponse', accepted: true, gameId: net.gameId });
           setDrawDialogContent({
@@ -1946,11 +1933,10 @@
     if (accepted) {
       finishGame({ winner: null, endType: 'draw', reason: '和棋' });
       netSend({ type: 'drawResult', accepted: true, gameId: net.gameId });
-      showToast('对方接受和棋，本局平局');
     } else {
       netSend({ type: 'drawResult', accepted: false, gameId: net.gameId });
       render();
-      showToast('对方拒绝和棋，对局继续');
+      setStatus('对方拒绝和棋，对局继续');
     }
   }
 
@@ -1963,10 +1949,9 @@
     clearDrawFlow();
     if (accepted) {
       if (!state.gameOver) finishGame({ winner: null, endType: 'draw', reason: '和棋' });
-      showToast('房主确认和棋，本局平局');
     } else {
       render();
-      showToast('和棋未达成，对局继续');
+      setStatus('和棋未达成，对局继续');
     }
   }
 
@@ -1975,7 +1960,7 @@
     if (!drawFlow.active || drawFlow.mode !== 'online') return;
     clearDrawFlow();
     render();
-    showToast('对方取消了和棋请求');
+    setStatus('对方取消了和棋请求');
   }
 
   function handleOnlineResign(message) {
@@ -1986,7 +1971,6 @@
     clearPendingMove();
     closeDialog(dom.resignDialog);
     finishGame({ winner: net.mySide, endType: 'resign', reason: '认输' });
-    showToast('对方已认输，你获胜');
   }
 
   function selectedMoves() {
@@ -2038,7 +2022,6 @@
         renderStatus();
         if (feedback) {
           setStatus(feedback, 'alert');
-          showToast(feedback, 2600);
         }
         return;
       }
@@ -2063,7 +2046,6 @@
           ? '这枚棋子无法解将，可换其他棋子挡将、吃子或移动帅/将。'
           : '这枚棋子暂时没有合法落点，可改选其他棋子。';
         setStatus(feedback, 'alert');
-        showToast(feedback, 2400);
       }
     }
   }
@@ -2149,7 +2131,6 @@
       state.net.gameId++;
       netSend({ type: 'restart', gameId: state.net.gameId });
       resetOnlineBoard();
-      showToast('已重新开始对局');
       return;
     }
 
@@ -2209,14 +2190,13 @@
     }
   }
 
-  function startLocalGame(showMessage = false) {
+  function startLocalGame() {
     cancelAiWork();
-    leaveOnline({ silent: true, fallbackToLocal: false });
+    leaveOnline({ fallbackToLocal: false });
     state.mode = 'local';
     state.ai = freshAIState();
     resetBoardState('red');
     render();
-    if (showMessage) showToast('已切换到自我对战');
   }
 
   function openAiSetup() {
@@ -2242,7 +2222,7 @@
     if (!AI_LEVELS[level] || !isSide(humanSide)) return;
     closeDialog(dom.setupDialog);
     cancelAiWork();
-    leaveOnline({ silent: true, fallbackToLocal: false });
+    leaveOnline({ fallbackToLocal: false });
     state.mode = 'ai';
     state.ai = freshAIState();
     state.ai.level = level;
@@ -2259,7 +2239,6 @@
       pushAiAnchor();
     }
     render();
-    showToast(`AI 对决开始 · ${AI_LEVELS[level].label}难度`);
   }
 
   function requestAiWorker(side, level, token, onResult) {
@@ -2635,7 +2614,7 @@
   }
 
   function leaveOnline(options = {}) {
-    const { silent = false, fallbackToLocal = true, notifyRemote = true } = options;
+    const { fallbackToLocal = true, notifyRemote = true } = options;
     const wasOnline = state.mode === 'online' || state.net.role;
     if (!wasOnline && !state.net.peer) {
       if (fallbackToLocal) {
@@ -2652,7 +2631,6 @@
     if (fallbackToLocal) {
       resetBoardState('red');
       render();
-      if (!silent) showToast('已退出房间');
     } else {
       render();
     }
@@ -2700,7 +2678,7 @@
 
   function openRoomSetup() {
     if (state.mode === 'online' && ['rps', 'playing'].includes(state.net.phase)) {
-      showToast('联机对局进行中，可在棋盘下方退出房间');
+      setStatus('联机对局进行中，可在棋盘下方退出房间');
       return;
     }
     dom.aiSetup.hidden = true;
@@ -3175,7 +3153,6 @@
           net.startWarning = false;
           clearStartRetryTimer(net);
           sendGameReady();
-          showToast('房主重新开始了对局');
         }
         break;
       case 'drawOffer':
@@ -3325,7 +3302,6 @@
     render();
     if (net.role === 'guest') sendGameReady();
     else armStartAckWatch();
-    showToast(`对局开始 · 你执${SIDE_COLOR_NAME[net.mySide]}`);
   }
 
   function resetOnlineBoard() {
@@ -3615,22 +3591,22 @@
     dom.modeLocalBtn.addEventListener('click', () => {
       if (state.mode === 'online') {
         if (isOnlineActive() && !window.confirm('离开当前房间？联机对局将结束。')) return;
-        leaveOnline({ fallbackToLocal: false, silent: true });
+        leaveOnline({ fallbackToLocal: false });
       }
-      startLocalGame(state.mode !== 'local');
+      startLocalGame();
     });
 
     dom.modeAiBtn.addEventListener('click', () => {
       if (state.mode === 'online') {
         if (isOnlineActive() && !window.confirm('离开当前房间？联机对局将结束。')) return;
-        leaveOnline({ fallbackToLocal: true, silent: true });
+        leaveOnline({ fallbackToLocal: true });
       }
       openAiSetup();
     });
 
     dom.modeRoomBtn.addEventListener('click', () => {
       if (state.mode === 'online' && ['rps', 'playing'].includes(state.net.phase)) {
-        showToast('联机对局进行中，可在棋盘下方退出房间');
+        setStatus('联机对局进行中，可在棋盘下方退出房间');
         return;
       }
       openRoomSetup();
